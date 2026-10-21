@@ -554,7 +554,7 @@ model ChatGroup {
   userId     String
   name       String
   pinned     Boolean           @default(false)
-  /// Unaddressed messages go to every member in turn, and members wake each other with @mentions.
+  /// Every member reads each new message in the group and decides whether to reply.
   conversationMode Boolean     @default(false)
   sectionId  String?
   section    BotSection?       @relation(fields: [sectionId], references: [id], onDelete: SetNull)
@@ -708,6 +708,10 @@ model Run {
   sourceMessage        Message?         @relation("RunSourceMessage", fields: [sourceMessageId], references: [id], onDelete: SetNull)
   routineId            String?
   routine              Routine?         @relation(fields: [routineId], references: [id], onDelete: SetNull)
+  /// The message that started the conversation-group chain this run belongs to.
+  groupChainMessageId  String?
+  /// What a conversation-group member did with its turn: speak, wait, pass or handoff.
+  conversationDecision String?
   // The failed routine run this run retries. Unique, so a run is retried at most once.
   retryOfRunId         String?          @unique
   startedAt            DateTime?
