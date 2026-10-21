@@ -239,12 +239,13 @@ describe("group handoff ownership", () => {
     expect(runCreate).not.toHaveBeenCalled();
   });
 
-  it("reads no chain or budget outside a conversation group", async () => {
+  it("locks no thread and reads no chain or budget outside a conversation group", async () => {
     const { deps, runCreate, tx } = harness([{ kind: "text", text: "user request" }]);
 
     await expect(
       handoffToGroupBot(deps as never, run, "group-1", { bot_id: "bot-b", message: "Next stage" }),
     ).resolves.toMatchObject({ ok: true });
+    expect(tx.$queryRaw).toHaveBeenCalledOnce();
     expect(tx.run.count).not.toHaveBeenCalled();
     expect(tx.run.update).not.toHaveBeenCalled();
     expect(runCreate).toHaveBeenCalledWith(

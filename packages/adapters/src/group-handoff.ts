@@ -41,29 +41,31 @@ export async function handoffToGroupBot(
         return { error: "group is no longer available" } as const;
       throw error;
     }
-    const [group, activeSource] = await Promise.all([
-      tx.chatGroup.findFirst({
-        where: { id: groupId, archivedAt: null, thread: { id: run.threadId } },
-        include: {
-          members: {
-            where: { bot: { archivedAt: null } },
-            include: { bot: { select: { id: true, name: true } } },
-            orderBy: { createdAt: "asc" },
-          },
+    const group = await tx.chatGroup.findFirst({
+      where: { id: groupId, archivedAt: null, thread: { id: run.threadId } },
+      include: {
+        members: {
+          where: { bot: { archivedAt: null } },
+          include: { bot: { select: { id: true, name: true } } },
+          orderBy: { createdAt: "asc" },
         },
-      }),
-      tx.run.findFirst({
-        where: {
-          id: run.id,
-          spaceId: run.spaceId,
-          threadId: run.threadId,
-          botId: run.botId,
-          userId: run.userId,
-          status: "running",
-        },
-        select: { id: true, sourceMessage: { select: { blocks: true } } },
-      }),
-    ]);
+      },
+    });
+    // Members' finishes and Stop hold the thread, so check the source and target after them.
+    if (group?.conversationMode) {
+      await tx.$queryRaw`SELECT id FROM threads WHERE id = ${run.threadId} FOR UPDATE`;
+    }
+    const activeSource = await tx.run.findFirst({
+      where: {
+        id: run.id,
+        spaceId: run.spaceId,
+        threadId: run.threadId,
+        botId: run.botId,
+        userId: run.userId,
+        status: "running",
+      },
+      select: { id: true, sourceMessage: { select: { blocks: true } } },
+    });
     if (!group || !activeSource) return { error: "source run is no longer active" } as const;
     if (!group.members.some((member) => member.bot.id === run.botId)) {
       return { error: "source bot is no longer a group member" } as const;
