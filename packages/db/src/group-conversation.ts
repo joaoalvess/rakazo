@@ -1,61 +1,35 @@
 import type { MessageBlock } from "@rakazo/contracts";
 import {
   ACTIVE_RUN_STATUSES,
-  botMessageHopExhausted,
-  isConversationalRun,
+  groupConversationMaxChainMessages,
+  groupConversationMaxMessagesPerHour,
+  hasMentionToken,
   mentionedMemberIds,
-  messageReaction,
-  nextBotMessageHop,
-  QUEUE_HOLDING_RUN_STATUSES,
 } from "@rakazo/core";
 import type { Prisma } from "./client.js";
 
-const CHAIN_NONCE_PREFIX = "group-chain:";
-const MENTION_NONCE_PREFIX = "group-mention:";
-const STEERABLE_RUN_STATUSES = new Set<string>(QUEUE_HOLDING_RUN_STATUSES);
-const PERSON_MESSAGE_PAGE_SIZE = 20;
+const WAKE_NONCE_PREFIX = "group-wake:";
+const CHAIN_PAUSE_NONCE_PREFIX = "group-pause:chain:";
+const HOUR_PAUSE_NONCE_PREFIX = "group-pause:hour:";
+const HOUR_MS = 60 * 60 * 1000;
+/** Decisions that put a bot message in the thread and count toward the budgets. */
+const POSTED_DECISIONS = ["speak", "handoff"];
 
 type Member = { id: string; name: string };
 
-export type GroupConversationRun = { id: string; taskId: string; botId: string; status: string };
+export type GroupConversationDecision = "speak" | "wait" | "pass" | "handoff";
 
-/** Nonce of a member's turn on a person's unaddressed message in a conversation group. */
-export function groupChainRunNonce(messageId: string, botId: string): string {
-  return `${CHAIN_NONCE_PREFIX}${messageId}:${botId}`;
-}
+/** Runs a finish woke, and the system line to post when a budget paused the chain. */
+export type GroupConversationWake = {
+  runIds: string[];
+  pause?: { clientNonce: string; text: string };
+};
 
-function messageBlocks(message: { blocks: unknown } | null | undefined): MessageBlock[] {
-  const blocks = message?.blocks;
-  return Array.isArray(blocks) ? (blocks as MessageBlock[]) : [];
-}
-
-/** A person's own message, not an emoji reaction or a relayed channel post. */
-function isPersonSend(message: { role: string; blocks: unknown; replyToMessageId: string | null }) {
-  const blocks = messageBlocks(message);
-  return (
-    !blocks.some((block) => block.kind === "channel_message") &&
-    !messageReaction({ role: message.role, blocks, replyToMessageId: message.replyToMessageId })
-  );
-}
-
-// Reactions differ from sends only in sealed text, so the scan pages instead of filtering.
-async function latestPersonMessage(tx: Prisma.TransactionClient, threadId: string) {
-  let beforeSeq: number | undefined;
-  for (;;) {
-    const page = await tx.message.findMany({
-      where: {
-        threadId,
-        role: "user",
-        ...(beforeSeq === undefined ? {} : { seq: { lt: beforeSeq } }),
-      },
-      orderBy: { seq: "desc" },
-      take: PERSON_MESSAGE_PAGE_SIZE,
-      select: { id: true, seq: true, role: true, blocks: true, replyToMessageId: true },
-    });
-    const person = page.find(isPersonSend);
-    if (person || page.length < PERSON_MESSAGE_PAGE_SIZE) return person;
-    beforeSeq = page.at(-1)?.seq;
-  }
+function messageText(blocks: unknown): string {
+  return (Array.isArray(blocks) ? (blocks as MessageBlock[]) : [])
+    .flatMap((block) => (block.kind === "text" ? [block.text] : []))
+    .join("\n")
+    .trim();
 }
 
 /**
@@ -77,183 +51,285 @@ export async function lockThreadForRunEnd(
   return thread?.conversationGroupId ?? null;
 }
 
-/**
- * The bot-message hop that woke a group run: 0 for a person's message, the recorded hop for a
- * handoff, and one more than the posting run for a mention, so both share one budget.
- */
-export async function groupRunHop(tx: Prisma.TransactionClient, runId: string): Promise<number> {
-  const run = await tx.run.findUnique({
-    where: { id: runId },
-    select: { clientNonce: true, sourceMessage: { select: { runId: true, blocks: true } } },
-  });
-  const handoff = messageBlocks(run?.sourceMessage).find(
-    (block): block is Extract<MessageBlock, { kind: "handoff" }> => block.kind === "handoff",
-  );
-  if (handoff) return handoff.hop ?? 0;
-  const posterRunId = run?.clientNonce?.startsWith(MENTION_NONCE_PREFIX)
-    ? run.sourceMessage?.runId
-    : undefined;
-  return posterRunId ? 1 + (await groupRunHop(tx, posterRunId)) : 0;
+/** A run's chain: the one it was woken into, or the person's message it answers. */
+function chainOf(run: {
+  trigger: string;
+  groupChainMessageId: string | null;
+  sourceMessage: { id: string; role: string } | null;
+}): string | null {
+  if (run.groupChainMessageId) return run.groupChainMessageId;
+  const answersPerson =
+    run.sourceMessage?.role === "user" && (run.trigger === "user" || run.trigger === "follow_up");
+  return answersPerson ? (run.sourceMessage?.id ?? null) : null;
+}
+
+const CHAIN_RUN_SELECT = {
+  trigger: true,
+  groupChainMessageId: true,
+  sourceMessage: { select: { id: true, role: true } },
+} as const;
+
+/** The chain a running member's handoff continues, or null when it starts a new one. */
+export async function groupRunChain(
+  tx: Prisma.TransactionClient,
+  runId: string,
+): Promise<string | null> {
+  const run = await tx.run.findUnique({ where: { id: runId }, select: CHAIN_RUN_SELECT });
+  return run ? chainOf(run) : null;
 }
 
 /**
- * Queue the next member's turn on a person's unaddressed message: the first member in order that
- * has not answered it, once no run started for it is still active. A member busy with older work
- * takes the message as steering, like a direct send, and the round moves past it. A run the person
- * stopped ends the round; an expired one, which records why, does not.
+ * The budget a bot message would exceed by waking members, if any. `pending` counts messages
+ * not yet recorded, such as a handoff about to be posted; a null chain is one it would start.
  */
-export async function queueGroupConversationTurn(
+export async function exceededGroupConversationBudget(
+  tx: Prisma.TransactionClient,
+  input: { threadId: string; chainMessageId: string | null; now: Date; pending?: number },
+): Promise<"chain" | "hour" | null> {
+  const pending = input.pending ?? 0;
+  const inChain = input.chainMessageId
+    ? await tx.run.count({
+        where: {
+          threadId: input.threadId,
+          groupChainMessageId: input.chainMessageId,
+          conversationDecision: { in: POSTED_DECISIONS },
+        },
+      })
+    : 0;
+  if (inChain + pending >= groupConversationMaxChainMessages()) return "chain";
+  const inHour = await tx.run.count({
+    where: {
+      threadId: input.threadId,
+      conversationDecision: { in: POSTED_DECISIONS },
+      completedAt: { gte: new Date(input.now.getTime() - HOUR_MS) },
+    },
+  });
+  return inHour + pending >= groupConversationMaxMessagesPerHour() ? "hour" : null;
+}
+
+/** The pause line for a budget, once per chain or per hour window. */
+async function pauseLine(
+  tx: Prisma.TransactionClient,
+  input: {
+    threadId: string;
+    budget: "chain" | "hour";
+    chainMessageId: string;
+    messageId: string;
+    now: Date;
+  },
+): Promise<GroupConversationWake["pause"]> {
+  if (input.budget === "chain") {
+    const clientNonce = `${CHAIN_PAUSE_NONCE_PREFIX}${input.chainMessageId}`;
+    const posted = await tx.message.findUnique({
+      where: { threadId_clientNonce: { threadId: input.threadId, clientNonce } },
+      select: { id: true },
+    });
+    if (posted) return undefined;
+    return {
+      clientNonce,
+      text: `Bots paused this conversation after ${groupConversationMaxChainMessages()} messages. Send a message to continue.`,
+    };
+  }
+  const posted = await tx.message.findFirst({
+    where: {
+      threadId: input.threadId,
+      clientNonce: { startsWith: HOUR_PAUSE_NONCE_PREFIX },
+      createdAt: { gte: new Date(input.now.getTime() - HOUR_MS) },
+    },
+    select: { id: true },
+  });
+  if (posted) return undefined;
+  return {
+    clientNonce: `${HOUR_PAUSE_NONCE_PREFIX}${input.messageId}`,
+    text: `Bots paused after ${groupConversationMaxMessagesPerHour()} messages in the last hour. They reply to each other again as the hour clears.`,
+  };
+}
+
+/**
+ * Wake the candidates that still listen to a chain: not busy in the thread, and not passed in
+ * this chain unless the message mentions them. Over a budget, nobody is woken.
+ */
+async function wakeMembers(
   tx: Prisma.TransactionClient,
   input: {
     spaceId: string;
     threadId: string;
     userId: string;
-    members: readonly { id: string }[];
-    source: { id: string; seq: number };
-    prompt: string;
+    members: Member[];
+    sender: Member;
+    chainMessageId: string;
+    message: { id: string; text: string };
+    candidates: string[];
+    now: Date;
   },
-): Promise<GroupConversationRun[]> {
-  const { spaceId, threadId, userId, source } = input;
-  const active = await tx.run.findMany({
-    where: { threadId, status: { in: [...ACTIVE_RUN_STATUSES] } },
-    select: {
-      id: true,
-      botId: true,
-      status: true,
-      trigger: true,
-      sourceMessage: { select: { seq: true } },
-    },
-  });
-  if (active.some((run) => (run.sourceMessage?.seq ?? -1) >= source.seq)) return [];
-  const [startedRuns, steered] = await Promise.all([
+): Promise<GroupConversationWake> {
+  const { threadId, candidates } = input;
+  const [decided, busy] = await Promise.all([
     tx.run.findMany({
-      where: { threadId, sourceMessage: { seq: { gte: source.seq } } },
-      select: { botId: true, status: true, error: true },
-    }),
-    tx.steeringMessage.findMany({ where: { messageId: source.id }, select: { botId: true } }),
-  ]);
-  const memberIds = new Set(input.members.map((member) => member.id));
-  const stopped = startedRuns.some(
-    (run) => run.status === "cancelled" && !run.error && memberIds.has(run.botId),
-  );
-  if (stopped) return [];
-  const answered = new Set([...startedRuns, ...steered].map((row) => row.botId));
-  for (const member of input.members) {
-    if (answered.has(member.id)) continue;
-    const busy = active.filter((run) => run.botId === member.id);
-    if (busy.length > 0) {
-      const steerable = busy.find(
-        (run) => STEERABLE_RUN_STATUSES.has(run.status) && isConversationalRun(run.trigger),
-      );
-      await tx.steeringMessage.create({
-        data: { messageId: source.id, botId: member.id, userId, runId: steerable?.id ?? null },
-      });
-      continue;
-    }
-    const task = await tx.task.create({
-      data: { spaceId, botId: member.id, threadId, userId, prompt: input.prompt, status: "queued" },
-    });
-    const run = await tx.run.create({
-      data: {
-        spaceId,
-        botId: member.id,
+      where: {
         threadId,
-        taskId: task.id,
-        userId,
-        status: "queued",
-        trigger: "user",
-        clientNonce: groupChainRunNonce(source.id, member.id),
-        sourceMessageId: source.id,
+        groupChainMessageId: input.chainMessageId,
+        botId: { in: candidates },
+        conversationDecision: { not: null },
       },
-    });
-    return [run];
-  }
-  return [];
-}
-
-async function wakeMentionedMembers(
-  tx: Prisma.TransactionClient,
-  finished: { id: string; spaceId: string; threadId: string; botId: string; userId: string },
-  members: Member[],
-  message: { id: string; blocks: readonly MessageBlock[] },
-): Promise<string[]> {
-  const sender = members.find((member) => member.id === finished.botId);
-  if (!sender) return [];
-  const text = message.blocks
-    .flatMap((block) => (block.kind === "text" ? [block.text] : []))
-    .join("\n");
-  const mentioned = mentionedMemberIds(text, members, sender.id);
-  if (mentioned.length === 0) return [];
-  if (botMessageHopExhausted(nextBotMessageHop(await groupRunHop(tx, finished.id)))) return [];
-  const busy = await tx.run.findMany({
-    where: {
-      threadId: finished.threadId,
-      botId: { in: mentioned },
-      status: { in: [...ACTIVE_RUN_STATUSES] },
-    },
-    select: { botId: true },
-  });
+      orderBy: { createdAt: "desc" },
+      select: { botId: true, conversationDecision: true },
+    }),
+    tx.run.findMany({
+      where: { threadId, botId: { in: candidates }, status: { in: [...ACTIVE_RUN_STATUSES] } },
+      select: { botId: true },
+    }),
+  ]);
+  const latest = new Map<string, string | null>();
+  for (const run of decided)
+    if (!latest.has(run.botId)) latest.set(run.botId, run.conversationDecision);
   const busyIds = new Set(busy.map((run) => run.botId));
+  const mentioned = new Set(mentionedMemberIds(input.message.text, input.members, input.sender.id));
+  const targets = candidates.filter(
+    (botId) => !busyIds.has(botId) && (latest.get(botId) !== "pass" || mentioned.has(botId)),
+  );
+  if (targets.length === 0) return { runIds: [] };
+  const budget = await exceededGroupConversationBudget(tx, {
+    threadId,
+    chainMessageId: input.chainMessageId,
+    now: input.now,
+  });
+  if (budget) {
+    return {
+      runIds: [],
+      pause: await pauseLine(tx, {
+        threadId,
+        budget,
+        chainMessageId: input.chainMessageId,
+        messageId: input.message.id,
+        now: input.now,
+      }),
+    };
+  }
   const runIds: string[] = [];
-  for (const botId of mentioned) {
-    // A member already working here reads the mention in the thread on its next turn.
-    if (busyIds.has(botId)) continue;
-    const clientNonce = `${MENTION_NONCE_PREFIX}${message.id}:${botId}`;
+  for (const botId of targets) {
+    const clientNonce = `${WAKE_NONCE_PREFIX}${input.message.id}:${botId}`;
+    // A unique violation would abort the whole transaction, so look first.
     const existing = await tx.run.findFirst({
-      where: { spaceId: finished.spaceId, clientNonce },
+      where: { spaceId: input.spaceId, clientNonce },
       select: { id: true },
     });
     if (existing) continue;
     const task = await tx.task.create({
       data: {
-        spaceId: finished.spaceId,
+        spaceId: input.spaceId,
         botId,
-        threadId: finished.threadId,
-        userId: finished.userId,
-        prompt: `[${sender.name} mentioned you]: ${text}`,
+        threadId,
+        userId: input.userId,
+        prompt: `[${input.sender.name}]: ${input.message.text}`,
         status: "queued",
       },
     });
     const run = await tx.run.create({
       data: {
-        spaceId: finished.spaceId,
+        spaceId: input.spaceId,
         botId,
-        threadId: finished.threadId,
+        threadId,
         taskId: task.id,
-        userId: finished.userId,
+        userId: input.userId,
         status: "queued",
         trigger: "follow_up",
-        sourceMessageId: message.id,
+        sourceMessageId: input.message.id,
+        groupChainMessageId: input.chainMessageId,
         clientNonce,
       },
     });
     runIds.push(run.id);
   }
-  return runIds;
+  return { runIds };
 }
 
 /**
- * After a run in a conversation group ends: wake the members its final reply mentions, then
- * continue the round on the person's latest unaddressed message. Returns the runs to enqueue.
+ * Colleagues' replies posted after a member started its turn, which it may not have read: the
+ * latest one when it waits, or the latest that mentions it otherwise.
+ */
+async function missedReply(
+  tx: Prisma.TransactionClient,
+  finished: { threadId: string; botId: string; since: Date; decision?: string },
+  members: Member[],
+): Promise<{
+  sender: Member;
+  chainMessageId: string;
+  message: { id: string; text: string };
+} | null> {
+  const self = members.find((member) => member.id === finished.botId);
+  if (!self) return null;
+  const replies = await tx.run.findMany({
+    where: {
+      threadId: finished.threadId,
+      botId: { in: members.filter((member) => member.id !== self.id).map((member) => member.id) },
+      conversationDecision: "speak",
+      completedAt: { gt: finished.since },
+    },
+    select: { id: true, botId: true, groupChainMessageId: true },
+  });
+  if (replies.length === 0) return null;
+  const messages = await tx.message.findMany({
+    where: {
+      threadId: finished.threadId,
+      role: "bot",
+      runId: { in: replies.map((run) => run.id) },
+    },
+    orderBy: { seq: "desc" },
+    select: { id: true, runId: true, blocks: true },
+  });
+  // A reply's final message is its run's last one; earlier ones were progress.
+  const finals = messages.filter(
+    (message, index) => messages.findIndex((other) => other.runId === message.runId) === index,
+  );
+  for (const message of finals) {
+    const reply = replies.find((run) => run.id === message.runId);
+    const sender = members.find((member) => member.id === reply?.botId);
+    const text = messageText(message.blocks);
+    if (!reply?.groupChainMessageId || !sender || !text) continue;
+    if (finished.decision !== "wait" && !hasMentionToken(text, self.name)) continue;
+    return { sender, chainMessageId: reply.groupChainMessageId, message: { id: message.id, text } };
+  }
+  return null;
+}
+
+/**
+ * After a run in a conversation group completes: record its chain and decision, wake the members
+ * still listening when it posted a reply, and hand it a colleague's reply it missed while busy.
  */
 export async function advanceGroupConversation(
   tx: Prisma.TransactionClient,
   groupId: string,
-  finishedRunId: string,
-  postedMessage?: { id: string; blocks: readonly MessageBlock[] },
-): Promise<string[]> {
+  input: {
+    runId: string;
+    posted?: { id: string; blocks: readonly MessageBlock[] };
+    decision?: "wait" | "pass";
+    now: Date;
+  },
+): Promise<GroupConversationWake> {
   const finished = await tx.run.findUnique({
-    where: { id: finishedRunId },
+    where: { id: input.runId },
     select: {
       id: true,
       spaceId: true,
       threadId: true,
       botId: true,
       userId: true,
-      sourceMessage: { select: { seq: true } },
+      createdAt: true,
+      startedAt: true,
+      ...CHAIN_RUN_SELECT,
     },
   });
-  if (!finished) return [];
+  if (!finished) return { runIds: [] };
+  const text = input.posted ? messageText(input.posted.blocks) : "";
+  const chainMessageId = chainOf(finished) ?? (text ? (input.posted?.id ?? null) : null);
+  const decision = text ? "speak" : input.decision;
+  if (chainMessageId !== finished.groupChainMessageId || decision) {
+    await tx.run.update({
+      where: { id: finished.id },
+      data: { groupChainMessageId: chainMessageId, conversationDecision: decision },
+    });
+  }
   const members = (
     await tx.chatGroupMember.findMany({
       where: { groupId, bot: { archivedAt: null } },
@@ -261,31 +337,38 @@ export async function advanceGroupConversation(
       select: { bot: { select: { id: true, name: true } } },
     })
   ).map((member) => member.bot);
-  const person = await latestPersonMessage(tx, finished.threadId);
-  // A newer message from the person ends the replies to older ones.
-  const stale = Boolean(
-    person && finished.sourceMessage && finished.sourceMessage.seq < person.seq,
-  );
-  const mentionRunIds =
-    postedMessage && !stale ? await wakeMentionedMembers(tx, finished, members, postedMessage) : [];
-  if (!person) return mentionRunIds;
-  const opener = await tx.run.findFirst({
-    where: {
-      threadId: finished.threadId,
-      sourceMessageId: person.id,
-      clientNonce: { startsWith: CHAIN_NONCE_PREFIX },
-    },
-    orderBy: { createdAt: "asc" },
-    select: { userId: true, task: { select: { prompt: true } } },
-  });
-  if (!opener) return mentionRunIds;
-  const turns = await queueGroupConversationTurn(tx, {
+  const sender = members.find((member) => member.id === finished.botId);
+  if (!sender) return { runIds: [] };
+  const base = {
     spaceId: finished.spaceId,
     threadId: finished.threadId,
-    userId: opener.userId,
+    userId: finished.userId,
     members,
-    source: person,
-    prompt: opener.task.prompt,
-  });
-  return [...mentionRunIds, ...turns.map((run) => run.id)];
+    now: input.now,
+  };
+  const woken: GroupConversationWake =
+    text && input.posted && chainMessageId
+      ? await wakeMembers(tx, {
+          ...base,
+          sender,
+          chainMessageId,
+          message: { id: input.posted.id, text },
+          candidates: members
+            .filter((member) => member.id !== sender.id)
+            .map((member) => member.id),
+        })
+      : { runIds: [] };
+  const missed = await missedReply(
+    tx,
+    {
+      threadId: finished.threadId,
+      botId: finished.botId,
+      since: finished.startedAt ?? finished.createdAt,
+      decision,
+    },
+    members,
+  );
+  if (!missed) return woken;
+  const again = await wakeMembers(tx, { ...base, ...missed, candidates: [sender.id] });
+  return { runIds: [...woken.runIds, ...again.runIds], pause: woken.pause ?? again.pause };
 }

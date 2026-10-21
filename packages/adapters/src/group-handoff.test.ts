@@ -17,8 +17,7 @@ const run = {
 function harness(
   sourceBlocks: unknown,
   existing?: { sourceRuns: { id: string; botId: string }[] },
-  ancestry: Record<string, unknown> = {},
-  conversationMode = false,
+  conversation?: { chain: Record<string, unknown>; busy?: boolean; posted?: number },
 ) {
   const runCreate = vi.fn(async () => ({ id: "run-b" }));
   const messageCreate = vi.fn(async () => ({ id: "message-1" }));
@@ -27,7 +26,7 @@ function harness(
     chatGroup: {
       findFirst: vi.fn(async () => ({
         id: "group-1",
-        conversationMode,
+        conversationMode: conversation !== undefined,
         members: ["bot-a", "bot-b", "bot-c"].map((id) => ({
           bot: { id, name: id.toUpperCase() },
         })),
@@ -35,14 +34,13 @@ function harness(
       update: vi.fn(async () => ({ id: "group-1" })),
     },
     run: {
-      findFirst: vi.fn(async () => ({
-        id: run.id,
-        sourceMessage: { blocks: sourceBlocks },
-      })),
-      findUnique: vi.fn(async (args: { where: { id: string } }) => ({
-        status: "running",
-        ...(ancestry[args.where.id] as object),
-      })),
+      findFirst: vi.fn(async (args: { where: { id?: string } }) => {
+        if (args.where.id) return { id: run.id, sourceMessage: { blocks: sourceBlocks } };
+        return conversation?.busy ? { id: "run-busy" } : null;
+      }),
+      findUnique: vi.fn(async () => ({ status: "running", ...conversation?.chain })),
+      count: vi.fn(async () => conversation?.posted ?? 0),
+      update: vi.fn(async () => ({ id: run.id })),
       create: runCreate,
     },
     message: {
@@ -166,52 +164,92 @@ describe("group handoff ownership", () => {
     expect(runCreate).not.toHaveBeenCalled();
   });
 
-  const mentionAncestry = {
-    "run-a": {
-      clientNonce: "group-mention:m2:bot-a",
-      sourceMessage: { runId: "run-z", blocks: [] },
-    },
-    "run-z": {
-      clientNonce: "group-chain:m1:bot-z",
-      sourceMessage: { runId: null, blocks: [] },
-    },
+  const answersPerson = {
+    trigger: "user",
+    groupChainMessageId: null,
+    sourceMessage: { id: "question-1", role: "user" },
   };
-  const hopRead = expect.objectContaining({
-    select: expect.objectContaining({ clientNonce: true }),
-  });
 
-  it("counts the mentions that woke the sender toward the chain's hop", async () => {
-    const { deps, messageCreate } = harness(
-      [{ kind: "text", text: "@A can you check?" }],
+  it("records a conversation handoff on its chain, past the hop cap while the budget allows", async () => {
+    const { deps, runCreate, tx } = harness(
+      [{ kind: "handoff", fromBotId: "bot-b", toBotId: "bot-a", text: "Stage six", hop: 6 }],
       undefined,
-      mentionAncestry,
-      true,
+      { chain: { trigger: "follow_up", groupChainMessageId: "question-1", sourceMessage: null } },
     );
 
     await expect(
-      handoffToGroupBot(deps as never, run, "group-1", { bot_id: "bot-b", message: "Next stage" }),
-    ).resolves.toMatchObject({ ok: true });
-    expect(messageCreate).toHaveBeenCalledWith(
+      handoffToGroupBot(deps as never, run, "group-1", { bot_id: "bot-c", message: "Stage seven" }),
+    ).resolves.toMatchObject({ ok: true, botId: "bot-c" });
+    expect(runCreate).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: expect.objectContaining({ blocks: [expect.objectContaining({ hop: 2 })] }),
+        data: expect.objectContaining({ groupChainMessageId: "question-1" }),
       }),
     );
+    expect(tx.run.update).toHaveBeenCalledWith({
+      where: { id: "run-a" },
+      data: { groupChainMessageId: "question-1", conversationDecision: "handoff" },
+    });
   });
 
-  it("reads no mention ancestry outside a conversation group", async () => {
-    const { deps, messageCreate, tx } = harness(
-      [{ kind: "text", text: "@A can you check?" }],
-      undefined,
-      mentionAncestry,
-    );
+  it("starts a chain at a conversation handoff from a run that answers no message", async () => {
+    const { deps, runCreate, tx } = harness([], undefined, {
+      chain: { trigger: "routine", groupChainMessageId: null, sourceMessage: null },
+    });
 
     await expect(
       handoffToGroupBot(deps as never, run, "group-1", { bot_id: "bot-b", message: "Next stage" }),
     ).resolves.toMatchObject({ ok: true });
-    expect(tx.run.findUnique).not.toHaveBeenCalledWith(hopRead);
-    expect(messageCreate).toHaveBeenCalledWith(
+    expect(runCreate).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: expect.objectContaining({ blocks: [expect.objectContaining({ hop: 1 })] }),
+        data: expect.objectContaining({ groupChainMessageId: "message-1" }),
+      }),
+    );
+    expect(tx.run.update).toHaveBeenCalledWith({
+      where: { id: "run-a" },
+      data: { groupChainMessageId: "message-1", conversationDecision: "handoff" },
+    });
+  });
+
+  it("refuses a conversation handoff that would exceed the chain budget", async () => {
+    const { deps, runCreate } = harness([{ kind: "text", text: "user request" }], undefined, {
+      chain: answersPerson,
+      posted: 39,
+    });
+
+    await expect(
+      handoffToGroupBot(deps as never, run, "group-1", { bot_id: "bot-b", message: "Next stage" }),
+    ).resolves.toEqual({
+      error:
+        "group handoff limit reached for this chain; finish the current stage in the shared thread instead",
+    });
+    expect(runCreate).not.toHaveBeenCalled();
+  });
+
+  it("refuses to hand a stage to a member already working in the thread", async () => {
+    const { deps, runCreate } = harness([{ kind: "text", text: "user request" }], undefined, {
+      chain: answersPerson,
+      busy: true,
+    });
+
+    await expect(
+      handoffToGroupBot(deps as never, run, "group-1", { bot_id: "bot-b", message: "Next stage" }),
+    ).resolves.toEqual({
+      error: "that member is already working in this thread; mention it in your reply instead",
+    });
+    expect(runCreate).not.toHaveBeenCalled();
+  });
+
+  it("reads no chain or budget outside a conversation group", async () => {
+    const { deps, runCreate, tx } = harness([{ kind: "text", text: "user request" }]);
+
+    await expect(
+      handoffToGroupBot(deps as never, run, "group-1", { bot_id: "bot-b", message: "Next stage" }),
+    ).resolves.toMatchObject({ ok: true });
+    expect(tx.run.count).not.toHaveBeenCalled();
+    expect(tx.run.update).not.toHaveBeenCalled();
+    expect(runCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ groupChainMessageId: undefined }),
       }),
     );
   });

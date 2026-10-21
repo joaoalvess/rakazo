@@ -3,7 +3,6 @@ import {
   hasMentionToken,
   inferHandoffTargetBotId,
   inferHandoffTargetName,
-  isUnaddressedGroupMessage,
   mentionedMemberIds,
   resolveGroupTargetBotIds,
 } from "./group-mentions.js";
@@ -90,24 +89,6 @@ describe("resolveGroupTargetBotIds", () => {
         members,
       }),
     ).toEqual(["a"]);
-  });
-});
-
-describe("isUnaddressedGroupMessage", () => {
-  it("is true only when no member is named by text or chip and nobody says @everyone", () => {
-    expect(isUnaddressedGroupMessage({ text: "hello team", members })).toBe(true);
-    expect(isUnaddressedGroupMessage({ text: "@BotB what do you think?", members })).toBe(false);
-    expect(isUnaddressedGroupMessage({ text: "@everyone thoughts?", members })).toBe(false);
-    expect(
-      isUnaddressedGroupMessage({ text: "hello team", members, explicitMentions: ["c"] }),
-    ).toBe(false);
-  });
-
-  it("ignores chips and prefixes that do not name a member", () => {
-    expect(
-      isUnaddressedGroupMessage({ text: "hello team", members, explicitMentions: ["outsider"] }),
-    ).toBe(true);
-    expect(isUnaddressedGroupMessage({ text: "ask @BotAB or mail ops@BotA", members })).toBe(true);
   });
 });
 

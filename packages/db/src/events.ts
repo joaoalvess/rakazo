@@ -115,7 +115,7 @@ export interface ClaimedSteeringMessage {
 
 export interface FinalizeRunResult {
   continuationRunId: string | null;
-  /** Conversation-group turns this finish queued, when there are any. */
+  /** Conversation-group members this finish woke, when there are any. */
   nextRunIds?: string[];
 }
 
@@ -136,6 +136,8 @@ export type FinalizeRunInput = FinalizeRunBase &
         outcome: "completed";
         blocks: MessageBlock[];
         markUnread?: boolean;
+        /** How a conversation-group member that posted no reply stayed silent. */
+        conversationDecision?: "wait" | "pass";
       }
     | { outcome: "failed"; error: string }
   );
@@ -1635,11 +1637,40 @@ async function finalizeRunOnce(
       });
     }
     const continuationRunId = await createPendingSteeringRun(tx, input);
-    const nextRunIds = conversationGroupId
-      ? await advanceGroupConversation(tx, conversationGroupId, input.runId, postedMessage)
-      : [];
+    const wake =
+      conversationGroupId && input.outcome === "completed"
+        ? await advanceGroupConversation(tx, conversationGroupId, {
+            runId: input.runId,
+            posted: postedMessage,
+            decision: input.conversationDecision,
+            now,
+          })
+        : undefined;
+    let seq = lastEvent.seq;
+    if (wake?.pause) {
+      const blocks: MessageBlock[] = [{ kind: "meta", text: wake.pause.text }];
+      const line = await createThreadMessageInTransaction(tx, {
+        threadId: input.threadId,
+        role: "system",
+        blocks,
+        botId: input.botId,
+        clientNonce: wake.pause.clientNonce,
+      });
+      ({ seq } = await appendEventInTransaction(tx, {
+        spaceId: input.spaceId,
+        threadId: input.threadId,
+        botId: input.botId,
+        type: "thread.message.created",
+        payload: { messageId: line.id, role: "system", blocks },
+      }));
+    }
     await tx.bot.update({ where: { id: input.botId }, data: { updatedAt: now } });
-    return { threadId: lastEvent.threadId, seq: lastEvent.seq, continuationRunId, nextRunIds };
+    return {
+      threadId: lastEvent.threadId,
+      seq,
+      continuationRunId,
+      nextRunIds: wake?.runIds ?? [],
+    };
   });
 }
 

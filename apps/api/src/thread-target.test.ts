@@ -78,30 +78,6 @@ describe("queued run supersession", () => {
       data: { status: "cancelled" },
     });
   });
-
-  it("also cancels queued turns a bot's message woke in a conversation group", async () => {
-    const tx = {
-      run: { findMany: vi.fn().mockResolvedValue([]), updateMany: vi.fn() },
-      task: { updateMany: vi.fn() },
-    };
-    await cancelSupersededQueuedRuns(tx as never, {
-      threadId: "thread-1",
-      botIds: ["bot-1"],
-      keepRunIds: ["run-new"],
-      botFollowUps: true,
-    });
-    expect(tx.run.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({
-          OR: [
-            { trigger: "user", sourceMessage: { role: "user" } },
-            { trigger: "reaction" },
-            { trigger: "follow_up", sourceMessage: { role: "bot" } },
-          ],
-        }),
-      }),
-    );
-  });
 });
 
 describe("reaction messages", () => {
@@ -3676,7 +3652,6 @@ describe("conversation group sends", () => {
       botId: "bot-a",
       status: "running",
       trigger: "user",
-      sourceMessage: { seq: 0 },
     };
     const tx = {
       thread: {
@@ -3717,10 +3692,7 @@ describe("conversation group sends", () => {
       event: {
         create: vi.fn().mockResolvedValue({ id: "event-1", seq: 1, createdAt: new Date() }),
       },
-      steeringMessage: {
-        create: vi.fn(),
-        findMany: vi.fn().mockResolvedValue(options.busy ? [{ botId: "bot-a" }] : []),
-      },
+      steeringMessage: { create: vi.fn() },
       chatGroup: {
         findFirst: vi.fn().mockResolvedValue({
           id: "group-1",
@@ -3759,38 +3731,42 @@ describe("conversation group sends", () => {
     return { tx, result };
   }
 
-  const createdNonces = (tx: ReturnType<typeof sendToGroup>["tx"]) =>
-    tx.run.create.mock.calls.map(([args]) => (args as { data: { clientNonce: string } }).data);
+  const createdRuns = (tx: ReturnType<typeof sendToGroup>["tx"]) =>
+    tx.run.create.mock.calls.map(
+      ([args]) =>
+        (args as { data: { botId: string; trigger: string; groupChainMessageId?: string } }).data,
+    );
 
-  it("opens a round with the first member's turn on an unaddressed message", async () => {
-    const { tx, result } = sendToGroup({ conversationMode: true, text: "what next?" });
+  it.each(["what next?", "@Beta what next?", "@everyone what next?"])(
+    "wakes every member on the message's chain for %j",
+    async (text) => {
+      const { tx, result } = sendToGroup({ conversationMode: true, text });
 
-    await expect(result).resolves.toMatchObject({ runId: "run-bot-a" });
-    expect(createdNonces(tx)).toEqual([
-      expect.objectContaining({ botId: "bot-a", clientNonce: "group-chain:msg-1:bot-a" }),
-    ]);
-  });
+      await expect(result).resolves.toMatchObject({ runIds: ["run-bot-a", "run-bot-b"] });
+      expect(createdRuns(tx)).toEqual([
+        expect.objectContaining({ botId: "bot-a", trigger: "user", groupChainMessageId: "msg-1" }),
+        expect.objectContaining({ botId: "bot-b", trigger: "user", groupChainMessageId: "msg-1" }),
+      ]);
+    },
+  );
 
-  it.each([
-    ["names a member", { conversationMode: true, text: "@Beta what next?" }],
-    ["is not a conversation", { conversationMode: false, text: "what next?" }],
-  ])("sends as before when the message %s", async (_label, options) => {
-    const { tx, result } = sendToGroup(options);
+  it("wakes only the first member, on no chain, outside conversation mode", async () => {
+    const { tx, result } = sendToGroup({ conversationMode: false, text: "what next?" });
 
     await result;
-    expect(createdNonces(tx)).toHaveLength(1);
-    expect(createdNonces(tx)[0]?.clientNonce).not.toMatch(/^group-chain:/);
+    expect(createdRuns(tx)).toEqual([expect.objectContaining({ botId: "bot-a" })]);
+    expect(createdRuns(tx)[0]?.groupChainMessageId).toBeUndefined();
   });
 
-  it("steers a busy first member and starts the round with the next one", async () => {
+  it("steers a busy member and still wakes the others", async () => {
     const { tx, result } = sendToGroup({ conversationMode: true, text: "what next?", busy: true });
 
     await result;
     expect(tx.steeringMessage.create).toHaveBeenCalledWith({
       data: { messageId: "msg-1", botId: "bot-a", userId: "user-1", runId: "run-busy" },
     });
-    expect(createdNonces(tx)).toEqual([
-      expect.objectContaining({ botId: "bot-b", clientNonce: "group-chain:msg-1:bot-b" }),
+    expect(createdRuns(tx)).toEqual([
+      expect.objectContaining({ botId: "bot-b", groupChainMessageId: "msg-1" }),
     ]);
   });
 });

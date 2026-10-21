@@ -1,6 +1,7 @@
 import { runContinueJob } from "@rakazo/adapter-kit";
 import { MessageBlock } from "@rakazo/contracts";
 import {
+  ACTIVE_RUN_STATUSES,
   botMessageHopExhausted,
   hasMentionToken,
   nextBotMessageHop,
@@ -9,7 +10,8 @@ import {
 import {
   appendEventInTransaction,
   createThreadMessageInTransaction,
-  groupRunHop,
+  exceededGroupConversationBudget,
+  groupRunChain,
   IsolationError,
   lockOwnedGroup,
   type PrismaClient,
@@ -116,11 +118,33 @@ export async function handoffToGroupBot(
           "do not hand this stage back to its sender; post the result in the shared thread instead",
       } as const;
     }
-    // Mentions in a conversation group spend the same hop budget as handoffs.
-    const hop = nextBotMessageHop(
-      sourceHandoff?.hop ?? (group.conversationMode ? await groupRunHop(tx, run.id) : undefined),
-    );
-    if (botMessageHopExhausted(hop)) {
+    const hop = nextBotMessageHop(sourceHandoff?.hop);
+    // A conversation group's budgets replace the hop cap, so replies and handoffs share them.
+    const chainMessageId = group.conversationMode ? await groupRunChain(tx, run.id) : null;
+    if (group.conversationMode) {
+      const busy = await tx.run.findFirst({
+        where: {
+          threadId: run.threadId,
+          botId: targetId,
+          status: { in: [...ACTIVE_RUN_STATUSES] },
+        },
+        select: { id: true },
+      });
+      if (busy) {
+        return {
+          error: "that member is already working in this thread; mention it in your reply instead",
+        } as const;
+      }
+    }
+    const exhausted = group.conversationMode
+      ? (await exceededGroupConversationBudget(tx, {
+          threadId: run.threadId,
+          chainMessageId,
+          now: new Date(),
+          pending: 1,
+        })) !== null
+      : botMessageHopExhausted(hop);
+    if (exhausted) {
       return {
         error:
           "group handoff limit reached for this chain; finish the current stage in the shared thread instead",
@@ -162,8 +186,18 @@ export async function handoffToGroupBot(
         status: "queued",
         trigger: "follow_up",
         sourceMessageId: message.id,
+        groupChainMessageId: group.conversationMode ? (chainMessageId ?? message.id) : undefined,
       },
     });
+    if (group.conversationMode) {
+      await tx.run.update({
+        where: { id: run.id },
+        data: {
+          groupChainMessageId: chainMessageId ?? message.id,
+          conversationDecision: "handoff",
+        },
+      });
+    }
     const event = await appendEventInTransaction(tx, {
       spaceId: run.spaceId,
       threadId: run.threadId,

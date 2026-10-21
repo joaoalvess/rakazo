@@ -332,11 +332,6 @@ async function expireOne(
       getLogger().error("stuck work continuation", error);
     });
   }
-  for (const runId of expired.nextRunIds ?? []) {
-    await deps.jobs.enqueue(runContinueJob(runId)).catch((error) => {
-      getLogger().error("stuck work group conversation", error);
-    });
-  }
   if (!deps.notifications || !noticesEnabled(run)) return;
   const stopped = stuckWorkStoppedNotification(run.status, run.bot.name);
   await sendStuckNotice(deps.notifications, run, {

@@ -157,7 +157,7 @@ export const GroupSchema = z.object({
   spaceId: Id,
   name: z.string(),
   pinned: z.boolean(),
-  /** Unaddressed messages go to every member in turn, and members wake each other with @mentions. */
+  /** Every member reads each new message in the group and decides whether to reply. */
   conversationMode: z.boolean().optional(),
   sectionId: Id.nullable(),
   archivedAt: z.string().nullable(),
