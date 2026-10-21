@@ -21,6 +21,30 @@ export function botMessageMaxHops(): number {
   return Number.isInteger(raw) && raw >= 1 ? raw : DEFAULT_BOT_MESSAGE_MAX_HOPS;
 }
 
+/** Bot messages one conversation-group chain may carry before members stop waking each other. */
+export const DEFAULT_GROUP_CONVERSATION_MAX_CHAIN_MESSAGES = 40;
+/** Bot messages a conversation group may carry in any rolling hour before the same pause. */
+export const DEFAULT_GROUP_CONVERSATION_MAX_MESSAGES_PER_HOUR = 60;
+
+function positiveInteger(value: string | undefined, fallback: number): number {
+  const raw = Number(value?.trim() || fallback);
+  return Number.isInteger(raw) && raw >= 1 ? raw : fallback;
+}
+
+export function groupConversationMaxChainMessages(): number {
+  return positiveInteger(
+    process.env.GROUP_CONVERSATION_MAX_CHAIN_MESSAGES,
+    DEFAULT_GROUP_CONVERSATION_MAX_CHAIN_MESSAGES,
+  );
+}
+
+export function groupConversationMaxMessagesPerHour(): number {
+  return positiveInteger(
+    process.env.GROUP_CONVERSATION_MAX_MESSAGES_PER_HOUR,
+    DEFAULT_GROUP_CONVERSATION_MAX_MESSAGES_PER_HOUR,
+  );
+}
+
 /** Cap total description characters across the rendered teammate directory. */
 export const BOT_DIRECTORY_DESCRIPTIONS_MAX_LENGTH = 8_000;
 

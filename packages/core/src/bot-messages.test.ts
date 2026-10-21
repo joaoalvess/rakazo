@@ -9,7 +9,11 @@ import {
   buildBotMessageWakePrompt,
   clampBotMessage,
   DEFAULT_BOT_MESSAGE_MAX_HOPS,
+  DEFAULT_GROUP_CONVERSATION_MAX_CHAIN_MESSAGES,
+  DEFAULT_GROUP_CONVERSATION_MAX_MESSAGES_PER_HOUR,
   formatBotRosterLines,
+  groupConversationMaxChainMessages,
+  groupConversationMaxMessagesPerHour,
   nextBotMessageHop,
   renderBotDirectory,
   renderGroupMembersContext,
@@ -91,6 +95,32 @@ describe("hop bounding", () => {
       hop = nextBotMessageHop(hop);
     }
     expect(delivered).toBe(DEFAULT_BOT_MESSAGE_MAX_HOPS);
+  });
+});
+
+describe("conversation group budgets", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  it.each([
+    [
+      "GROUP_CONVERSATION_MAX_CHAIN_MESSAGES",
+      groupConversationMaxChainMessages,
+      DEFAULT_GROUP_CONVERSATION_MAX_CHAIN_MESSAGES,
+    ],
+    [
+      "GROUP_CONVERSATION_MAX_MESSAGES_PER_HOUR",
+      groupConversationMaxMessagesPerHour,
+      DEFAULT_GROUP_CONVERSATION_MAX_MESSAGES_PER_HOUR,
+    ],
+  ] as const)("reads %s and falls back to its default", (name, read, fallback) => {
+    vi.stubEnv(name, undefined);
+    expect(read()).toBe(fallback);
+    vi.stubEnv(name, " 12 ");
+    expect(read()).toBe(12);
+    for (const value of ["", "0", "-1", "2.5", "ten"]) {
+      vi.stubEnv(name, value);
+      expect(read()).toBe(fallback);
+    }
   });
 });
 
