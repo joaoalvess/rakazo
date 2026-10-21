@@ -20,10 +20,11 @@ function hopTx(runs: Record<string, RunRow>) {
   } as unknown as Prisma.TransactionClient;
 }
 
+type StartedRun = { botId: string; status?: string; error?: string | null };
+
 function turnTx(options: {
   active?: Array<{ id: string; botId: string; status: string; trigger: string; seq?: number }>;
-  started?: string[];
-  replied?: string[];
+  started?: Array<string | StartedRun>;
   steered?: string[];
 }) {
   const client = {
@@ -34,15 +35,14 @@ function turnTx(options: {
               ...run,
               sourceMessage: seq === undefined ? null : { seq },
             }))
-          : (options.started ?? []).map((botId) => ({ botId })),
+          : (options.started ?? []).map((run) =>
+              typeof run === "string" ? { botId: run, status: "completed", error: null } : run,
+            ),
       ),
       create: vi.fn(async (args: { data: Record<string, unknown> }) => ({
         id: `run-${String(args.data.botId)}`,
         ...args.data,
       })),
-    },
-    message: {
-      findMany: vi.fn(async () => (options.replied ?? []).map((botId) => ({ botId }))),
     },
     steeringMessage: {
       findMany: vi.fn(async () => (options.steered ?? []).map((botId) => ({ botId }))),
@@ -120,6 +120,26 @@ describe("queueGroupConversationTurn", () => {
         sourceMessageId: "message-1",
       }),
     });
+  });
+
+  it("stays stopped after the person stopped a turn, but moves past an expired one", async () => {
+    const stopped = turnTx({ started: [{ botId: "ada", status: "cancelled", error: null }] });
+    await expect(queueGroupConversationTurn(stopped.tx, turnInput)).resolves.toEqual([]);
+    expect(stopped.client.run.create).not.toHaveBeenCalled();
+
+    const expired = turnTx({
+      started: [{ botId: "ada", status: "cancelled", error: "Stopped waiting for an answer" }],
+    });
+    const runs = await queueGroupConversationTurn(expired.tx, turnInput);
+    expect(runs.map((run) => run.botId)).toEqual(["ben"]);
+  });
+
+  it("ignores a stopped turn of a bot that left the group", async () => {
+    const { tx } = turnTx({ started: [{ botId: "zed", status: "cancelled", error: null }] });
+
+    const runs = await queueGroupConversationTurn(tx, turnInput);
+
+    expect(runs.map((run) => run.botId)).toEqual(["ada"]);
   });
 
   it("steers a member busy with older work and moves on", async () => {

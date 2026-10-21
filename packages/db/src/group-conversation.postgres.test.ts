@@ -198,13 +198,13 @@ describePostgres("conversation groups (PostgreSQL)", () => {
       await expect(finish(cyTurn!, { text: "Agreed." })).resolves.toEqual([]);
     }));
 
-  it("ignores a reaction but stops the round when the person writes again", () =>
+  it("ignores reactions, even a page of them, but stops the round when the person writes again", () =>
     fixture(async () => {
       const message = await personSays("Thoughts on the launch?");
       const opener = await openRound(message, "Thoughts on the launch?");
       const [benTurn] = await finish(opener.id, { text: "Ship it on Monday." });
       const reply = await prisma.message.findFirstOrThrow({ where: { runId: opener.id } });
-      await personSays("👍", reply.id);
+      for (let index = 0; index < 21; index += 1) await personSays("👍", reply.id);
 
       const [cyTurn] = await finish(benTurn!, { text: "Monday works." });
       await expect(turn(cyTurn!)).resolves.toMatchObject({ botId: cy.id });
@@ -262,6 +262,40 @@ describePostgres("conversation groups (PostgreSQL)", () => {
           select: { botId: true, runId: true },
         }),
       ).resolves.toEqual([{ botId: ben.id, runId: busy.id }]);
+    }));
+
+  it("stays stopped after the person stops the round", () =>
+    fixture(async () => {
+      const message = await personSays("Plan the offsite?");
+      const opener = await openRound(message, "Plan the offsite?");
+      await finish(opener.id, { text: "Lisbon in May." });
+      await prisma.run.updateMany({
+        where: { threadId, status: { in: ["queued", "running", "waiting_input"] } },
+        data: { status: "cancelled", completedAt: new Date() },
+      });
+      const later = await queueRun(cy.id, { prompt: "post the morning summary" });
+
+      await expect(finish(later.id, { text: "Morning summary." })).resolves.toEqual([]);
+      expect(await prisma.run.count({ where: { threadId, status: "queued" } })).toBe(0);
+    }));
+
+  it("still gives a turn to a member whose late reply answered an older message", () =>
+    fixture(async () => {
+      const earlier = await personSays("@Ben draft the notes");
+      const busy = await queueRun(ben.id, {
+        prompt: "draft the notes",
+        sourceMessageId: earlier.id,
+      });
+      const message = await personSays("Ideas for the launch?");
+      const opener = await openRound(message, "Ideas for the launch?");
+
+      await expect(finish(busy.id, { text: "Notes drafted." })).resolves.toEqual([]);
+      const [benTurn] = await finish(opener.id, { text: "A launch video." });
+
+      await expect(turn(benTurn!)).resolves.toMatchObject({
+        botId: ben.id,
+        clientNonce: groupChainRunNonce(message.id, ben.id),
+      });
     }));
 
   it("moves on when a member's wait for input expires", () =>

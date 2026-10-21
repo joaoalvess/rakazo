@@ -13,6 +13,7 @@ import type { Prisma } from "./client.js";
 const CHAIN_NONCE_PREFIX = "group-chain:";
 const MENTION_NONCE_PREFIX = "group-mention:";
 const STEERABLE_RUN_STATUSES = new Set<string>(QUEUE_HOLDING_RUN_STATUSES);
+const PERSON_MESSAGE_PAGE_SIZE = 20;
 
 type Member = { id: string; name: string };
 
@@ -37,14 +38,24 @@ function isPersonSend(message: { role: string; blocks: unknown; replyToMessageId
   );
 }
 
+// Reactions differ from sends only in sealed text, so the scan pages instead of filtering.
 async function latestPersonMessage(tx: Prisma.TransactionClient, threadId: string) {
-  const recent = await tx.message.findMany({
-    where: { threadId, role: "user" },
-    orderBy: { seq: "desc" },
-    take: 20,
-    select: { id: true, seq: true, role: true, blocks: true, replyToMessageId: true },
-  });
-  return recent.find(isPersonSend);
+  let beforeSeq: number | undefined;
+  for (;;) {
+    const page = await tx.message.findMany({
+      where: {
+        threadId,
+        role: "user",
+        ...(beforeSeq === undefined ? {} : { seq: { lt: beforeSeq } }),
+      },
+      orderBy: { seq: "desc" },
+      take: PERSON_MESSAGE_PAGE_SIZE,
+      select: { id: true, seq: true, role: true, blocks: true, replyToMessageId: true },
+    });
+    const person = page.find(isPersonSend);
+    if (person || page.length < PERSON_MESSAGE_PAGE_SIZE) return person;
+    beforeSeq = page.at(-1)?.seq;
+  }
 }
 
 /**
@@ -88,7 +99,8 @@ export async function groupRunHop(tx: Prisma.TransactionClient, runId: string): 
 /**
  * Queue the next member's turn on a person's unaddressed message: the first member in order that
  * has not answered it, once no run started for it is still active. A member busy with older work
- * takes the message as steering, like a direct send, and the round moves past it.
+ * takes the message as steering, like a direct send, and the round moves past it. A run the person
+ * stopped ends the round; an expired one, which records why, does not.
  */
 export async function queueGroupConversationTurn(
   tx: Prisma.TransactionClient,
@@ -113,18 +125,19 @@ export async function queueGroupConversationTurn(
     },
   });
   if (active.some((run) => (run.sourceMessage?.seq ?? -1) >= source.seq)) return [];
-  const [startedRuns, replies, steered] = await Promise.all([
+  const [startedRuns, steered] = await Promise.all([
     tx.run.findMany({
       where: { threadId, sourceMessage: { seq: { gte: source.seq } } },
-      select: { botId: true },
-    }),
-    tx.message.findMany({
-      where: { threadId, role: "bot", seq: { gt: source.seq } },
-      select: { botId: true },
+      select: { botId: true, status: true, error: true },
     }),
     tx.steeringMessage.findMany({ where: { messageId: source.id }, select: { botId: true } }),
   ]);
-  const answered = new Set([...startedRuns, ...replies, ...steered].map((row) => row.botId));
+  const memberIds = new Set(input.members.map((member) => member.id));
+  const stopped = startedRuns.some(
+    (run) => run.status === "cancelled" && !run.error && memberIds.has(run.botId),
+  );
+  if (stopped) return [];
+  const answered = new Set([...startedRuns, ...steered].map((row) => row.botId));
   for (const member of input.members) {
     if (answered.has(member.id)) continue;
     const busy = active.filter((run) => run.botId === member.id);
