@@ -3038,6 +3038,10 @@ msgstr "Участник"
 msgid "Members ({0})"
 msgstr ""
 
+#: src/pages/GroupPanel.tsx
+msgid "Members take turns"
+msgstr "Участники отвечают по очереди"
+
 #: src/pages/KnowledgeSection.tsx
 #: src/pages/MemorySettingsOverlay.tsx
 #: src/pages/SettingsOverlay.tsx
