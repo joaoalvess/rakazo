@@ -352,6 +352,37 @@ describePostgres("conversation groups (PostgreSQL)", () => {
       ]);
     }));
 
+  it("answers a person who named a busy member once it stays silent", () =>
+    fixture(async () => {
+      const question = await personSays("Who has the numbers?");
+      const [adaRun, benRun, cyRun] = await wakeEveryone(question, "Who has the numbers?");
+      await finish(adaRun!.id, { decision: "pass" });
+      await finish(cyRun!.id, { decision: "pass" });
+      // Ben read both while he worked, as claimSteering records it.
+      const named = await personSays("@Ben status?");
+      const aside = await personSays("Anyone around?");
+      for (const message of [named, aside]) {
+        await prisma.steeringMessage.create({
+          data: {
+            messageId: message.id,
+            botId: ben.id,
+            userId: owner.userId,
+            runId: benRun!.id,
+            claimedAt: new Date(),
+          },
+        });
+      }
+
+      await finish(benRun!.id, { decision: "wait" });
+
+      expect(
+        await prisma.run.findMany({
+          where: { threadId, botId: ben.id, status: "queued" },
+          select: { trigger: true, sourceMessageId: true },
+        }),
+      ).toEqual([{ trigger: "follow_up", sourceMessageId: named.id }]);
+    }));
+
   it("records nothing and wakes nobody outside a live conversation group", () =>
     fixture(async () => {
       await prisma.chatGroup.update({ where: { id: groupId }, data: { conversationMode: false } });

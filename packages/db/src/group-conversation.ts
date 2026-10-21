@@ -146,6 +146,31 @@ async function pauseLine(
 }
 
 /**
+ * A member that stayed silent never answered a person who named it while it worked, so that
+ * message goes back to its pending steering, for a run of its own that must reply.
+ */
+export async function releaseSteeringNamingMember(
+  tx: Prisma.TransactionClient,
+  input: { runId: string; botId: string },
+): Promise<void> {
+  const [bot, claimed] = await Promise.all([
+    tx.bot.findUnique({ where: { id: input.botId }, select: { name: true } }),
+    tx.steeringMessage.findMany({
+      where: { runId: input.runId, claimedAt: { not: null }, message: { role: "user" } },
+      select: { id: true, message: { select: { blocks: true } } },
+    }),
+  ]);
+  const naming = claimed.filter(
+    (item) => bot && hasMentionToken(messageText(item.message.blocks), bot.name),
+  );
+  if (naming.length === 0) return;
+  await tx.steeringMessage.updateMany({
+    where: { id: { in: naming.map((item) => item.id) } },
+    data: { claimedAt: null },
+  });
+}
+
+/**
  * Wake the candidates that still listen to a chain: not busy in the thread, and not passed in
  * this chain unless the message mentions them. Over a budget, nobody is woken.
  */

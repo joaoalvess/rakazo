@@ -28,7 +28,11 @@ import { getLogger } from "@rakazo/logging";
 import { cancelRunsInTransaction } from "./cancel-runs.js";
 import type { Prisma, PrismaClient } from "./client.js";
 import { expireComputerExecutionLeases } from "./computers.js";
-import { advanceGroupConversation, lockThreadForRunEnd } from "./group-conversation.js";
+import {
+  advanceGroupConversation,
+  lockThreadForRunEnd,
+  releaseSteeringNamingMember,
+} from "./group-conversation.js";
 import {
   assertRunCanWriteHistory,
   assertRunIsCancelled,
@@ -1613,6 +1617,9 @@ async function finalizeRunOnce(
     });
     await tx.event.deleteMany({ where: { runId: input.runId, type: "thread.progress" } });
     if (input.outcome === "completed") {
+      if (conversationGroupId && input.conversationDecision) {
+        await releaseSteeringNamingMember(tx, input);
+      }
       await tx.steeringMessage.deleteMany({
         where: { runId: input.runId, claimedAt: { not: null } },
       });
