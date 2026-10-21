@@ -3995,6 +3995,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
               .enqueue(runContinueJob(failed.continuationRunId))
               .catch((error) => getLogger().error("steering continuation enqueue", error));
           }
+          await enqueueGroupConversationRuns(deps, failed.nextRunIds);
           if (run.trigger === "bot_message") {
             await returnBotMessageOutcome(
               deps,
@@ -7950,6 +7951,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
                     .enqueue(runContinueJob(stopped.continuationRunId))
                     .catch((error) => getLogger().error("steering continuation enqueue", error));
                 }
+                await enqueueGroupConversationRuns(deps, stopped.nextRunIds);
                 if (run.trigger === "bot_message") {
                   await returnBotMessageOutcome(
                     deps,
@@ -8211,6 +8213,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
               .enqueue(runContinueJob(completed.continuationRunId))
               .catch((error) => getLogger().error("steering continuation enqueue", error));
           }
+          await enqueueGroupConversationRuns(deps, completed.nextRunIds);
           if (botMessageOutcome) {
             // Prefer the final reply. If the turn only posted mid-turn progress, return that
             // text explicitly as status. Delivery uses a stable auto-outcome key; mark
@@ -8298,6 +8301,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
               .enqueue(runContinueJob(failed.continuationRunId))
               .catch((error) => getLogger().error("steering continuation enqueue", error));
           }
+          await enqueueGroupConversationRuns(deps, failed.nextRunIds);
           if (run.trigger === "bot_message") {
             await returnBotMessageOutcome(
               deps,
@@ -8553,6 +8557,20 @@ async function notifyRun(
       if (options.retryOnFailure) throw error;
       getLogger().error("run notification", error);
     });
+}
+
+/** The queued runs are durable; the job reconciler repairs a missed immediate wake. */
+async function enqueueGroupConversationRuns(
+  deps: Pick<ExecutorDeps, "jobs">,
+  runIds: readonly string[] = [],
+) {
+  await Promise.all(
+    runIds.map((runId) =>
+      deps.jobs
+        .enqueue(runContinueJob(runId))
+        .catch((error) => getLogger().error("group conversation enqueue", error)),
+    ),
+  );
 }
 
 async function renewRunLease(

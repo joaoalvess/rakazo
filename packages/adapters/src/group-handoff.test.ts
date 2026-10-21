@@ -13,6 +13,7 @@ const run = {
 function harness(
   sourceBlocks: unknown,
   existing?: { sourceRuns: { id: string; botId: string }[] },
+  ancestry: Record<string, unknown> = {},
 ) {
   const runCreate = vi.fn(async () => ({ id: "run-b" }));
   const messageCreate = vi.fn(async () => ({ id: "message-1" }));
@@ -32,7 +33,10 @@ function harness(
         id: run.id,
         sourceMessage: { blocks: sourceBlocks },
       })),
-      findUnique: vi.fn(async () => ({ status: "running" })),
+      findUnique: vi.fn(async (args: { where: { id: string } }) => ({
+        status: "running",
+        ...(ancestry[args.where.id] as object),
+      })),
       create: runCreate,
     },
     message: {
@@ -153,5 +157,31 @@ describe("group handoff ownership", () => {
       }),
     ).resolves.toEqual({ error: "cannot verify the group handoff chain" });
     expect(runCreate).not.toHaveBeenCalled();
+  });
+
+  it("counts the mentions that woke the sender toward the chain's hop", async () => {
+    const { deps, messageCreate } = harness(
+      [{ kind: "text", text: "@A can you check?" }],
+      undefined,
+      {
+        "run-a": {
+          clientNonce: "group-mention:m2:bot-a",
+          sourceMessage: { runId: "run-z", blocks: [] },
+        },
+        "run-z": {
+          clientNonce: "group-chain:m1:bot-z",
+          sourceMessage: { runId: null, blocks: [] },
+        },
+      },
+    );
+
+    await expect(
+      handoffToGroupBot(deps as never, run, "group-1", { bot_id: "bot-b", message: "Next stage" }),
+    ).resolves.toMatchObject({ ok: true });
+    expect(messageCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ blocks: [expect.objectContaining({ hop: 2 })] }),
+      }),
+    );
   });
 });

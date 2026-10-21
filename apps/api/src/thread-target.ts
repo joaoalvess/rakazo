@@ -16,6 +16,7 @@ import {
   BACKGROUND_RUN_TRIGGERS,
   callIdFromClientNonce,
   isConversationalRun,
+  isUnaddressedGroupMessage,
   messageReaction,
   projectMessages,
   QUEUE_HOLDING_RUN_STATUSES,
@@ -31,8 +32,10 @@ import {
   createRepos,
   createThreadMessageInTransaction,
   expireComputerExecutionLeases,
+  groupChainRunNonce,
   IsolationError,
   lockOwnedGroup,
+  queueGroupConversationTurn,
   retireWaitingQuestionInTransaction,
   touchGroupUpdatedAt,
 } from "@rakazo/db";
@@ -226,14 +229,24 @@ function sendResult(message: { seq: number }, runs: Array<{ id: string; taskId: 
 
 export async function cancelSupersededQueuedRuns(
   tx: Prisma.TransactionClient,
-  input: { threadId: string; botIds: string[]; keepRunIds: string[] },
+  input: {
+    threadId: string;
+    botIds: string[];
+    keepRunIds: string[];
+    /** Conversation groups also drop turns a bot's mention or handoff queued. */
+    botFollowUps?: boolean;
+  },
 ) {
   const superseded = await tx.run.findMany({
     where: {
       threadId: input.threadId,
       botId: { in: input.botIds },
       status: "queued",
-      OR: [{ trigger: "user", sourceMessage: { role: "user" } }, { trigger: "reaction" }],
+      OR: [
+        { trigger: "user", sourceMessage: { role: "user" } },
+        { trigger: "reaction" },
+        ...(input.botFollowUps ? [{ trigger: "follow_up", sourceMessage: { role: "bot" } }] : []),
+      ],
       id: { notIn: input.keepRunIds },
     },
     select: { id: true, taskId: true },
@@ -273,11 +286,14 @@ async function lockAndLoadGroupMembers(
     },
   });
   if (!group || group.members.length < GROUP_MEMBER_MIN) throw new IsolationError();
-  return group.members.map((member) => ({
-    botId: member.bot.id,
-    name: member.bot.name,
-    color: member.bot.color,
-  }));
+  return {
+    conversationMode: group.conversationMode,
+    members: group.members.map((member) => ({
+      botId: member.bot.id,
+      name: member.bot.name,
+      color: member.bot.color,
+    })),
+  };
 }
 
 export async function resolveThreadTarget(
@@ -850,14 +866,23 @@ export async function sendThreadMessage(
         return { message, runs: [run], eventSeq: event.seq };
       }
 
-      const members = await lockAndLoadGroupMembers(tx, actor, target);
+      const { conversationMode, members } = await lockAndLoadGroupMembers(tx, actor, target);
       const memberBotIds = members.map((member) => member.botId);
+      const memberRefs = members.map((member) => ({ id: member.botId, name: member.name }));
       const mentionTargets = splitMentionTargets(input.mentions);
       const targetBotIds = resolveGroupTargetBotIds({
         text: input.text ?? "",
-        members: members.map((member) => ({ id: member.botId, name: member.name })),
+        members: memberRefs,
         explicitMentions: mentionTargets.botMentionIds,
       });
+      // Decided here, where typed chips are known; the turn nonces carry it afterwards.
+      const conversationRound =
+        conversationMode &&
+        isUnaddressedGroupMessage({
+          text: input.text ?? "",
+          members: memberRefs,
+          explicitMentions: mentionTargets.botMentionIds,
+        });
       const { blocks: attachmentBlocks, artifacts } = await resolveGroupSendAttachments(
         { prisma: tx },
         actor,
@@ -959,11 +984,26 @@ export async function sendThreadMessage(
             userId: actor.userId,
             status: "queued",
             trigger: "user",
-            clientNonce: sendRunClientNonce(input.clientNonce, message.id, botId),
+            clientNonce: conversationRound
+              ? groupChainRunNonce(message.id, botId)
+              : sendRunClientNonce(input.clientNonce, message.id, botId),
             sourceMessageId: message.id,
           },
         });
         runs.push(run);
+      }
+      // A busy first member took the message as steering; the round starts with the next one.
+      if (conversationRound && answeredByBotId.size === 0 && activeByBotId.size > 0) {
+        runs.push(
+          ...(await queueGroupConversationTurn(tx, {
+            spaceId: actor.spaceId,
+            threadId: target.threadId,
+            userId: actor.userId,
+            members: memberRefs,
+            source: message,
+            prompt: buildSendPrompt(input.text, artifacts, connectorNames),
+          })),
+        );
       }
       const firstRun = runs[0];
       const eventBotId = firstRun?.botId ?? targetBotIds[0];
@@ -978,6 +1018,7 @@ export async function sendThreadMessage(
             threadId: target.threadId,
             botIds: createdRuns.map((run) => run.botId),
             keepRunIds: createdRuns.map((run) => run.id),
+            botFollowUps: conversationMode,
           });
         }
       }
@@ -1074,7 +1115,9 @@ export async function reactToThreadMessage(
       return { eventSeq: null, runs: run?.status === "waiting_takeover" ? [run] : [] };
     }
     const members =
-      target.kind === "group" ? await lockAndLoadGroupMembers(tx, actor, target) : undefined;
+      target.kind === "group"
+        ? (await lockAndLoadGroupMembers(tx, actor, target)).members
+        : undefined;
     const currentTarget = members
       ? { ...target, memberBotIds: members.map((member) => member.botId) }
       : target;

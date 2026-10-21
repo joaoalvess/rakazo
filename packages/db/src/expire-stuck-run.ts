@@ -8,6 +8,7 @@ import {
   createPendingSteeringRun,
   discardAnsweredSteering,
 } from "./events.js";
+import { advanceGroupConversation } from "./group-conversation.js";
 import { createThreadMessageInTransaction } from "./messages.js";
 
 export interface ExpireStuckRunInput {
@@ -22,6 +23,8 @@ export interface ExpireStuckRunInput {
 export interface ExpireStuckRunResult {
   seq: number;
   continuationRunId: string | null;
+  /** Conversation-group turns this expiry queued, when there are any. */
+  nextRunIds?: string[];
 }
 
 /**
@@ -139,5 +142,10 @@ export async function expireStuckRun(
     threadId: run.threadId,
     botId: run.botId,
   });
-  return { seq: cancelledEvent.seq, continuationRunId };
+  const nextRunIds = await advanceGroupConversation(tx, input.runId);
+  return {
+    seq: cancelledEvent.seq,
+    continuationRunId,
+    ...(nextRunIds.length > 0 ? { nextRunIds } : {}),
+  };
 }

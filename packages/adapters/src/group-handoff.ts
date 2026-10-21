@@ -4,6 +4,7 @@ import { botMessageHopExhausted, nextBotMessageHop, renderGroupMembersContext } 
 import {
   appendEventInTransaction,
   createThreadMessageInTransaction,
+  groupRunHop,
   IsolationError,
   lockOwnedGroup,
   type PrismaClient,
@@ -110,7 +111,8 @@ export async function handoffToGroupBot(
           "do not hand this stage back to its sender; post the result in the shared thread instead",
       } as const;
     }
-    const hop = nextBotMessageHop(sourceHandoff?.hop);
+    // Mentions in a conversation group spend the same hop budget as handoffs.
+    const hop = nextBotMessageHop(sourceHandoff?.hop ?? (await groupRunHop(tx, run.id)));
     if (botMessageHopExhausted(hop)) {
       return {
         error:

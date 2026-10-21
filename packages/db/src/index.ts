@@ -17,6 +17,7 @@ export * from "./database-access.js";
 export * from "./events.js";
 export * from "./expire-stuck-run.js";
 export * from "./external-conversations.js";
+export * from "./group-conversation.js";
 export * from "./groups.js";
 export * from "./history-retrieval.js";
 export * from "./memory-config.js";
