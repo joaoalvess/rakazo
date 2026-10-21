@@ -9208,7 +9208,7 @@ export const ROUTINE_SILENT_REPLY_GUIDANCE = `If this routine's prompt says to s
 
 export const REACTION_SILENT_REPLY_GUIDANCE = `The user reacted with an emoji to your message. Reply only if the reaction calls for it, such as a correction after 👎, a go-ahead on something you proposed, or a question. Otherwise the entire final assistant reply must be exactly ${NO_RESPONSE}, with no message_user call.`;
 
-export const GROUP_CONVERSATION_SILENT_REPLY_GUIDANCE = `Nobody in this group named you in the message you are answering. If you have nothing to add to what your colleagues already said, the entire final assistant reply must be exactly ${NO_RESPONSE}, with no surrounding prose.`;
+export const GROUP_CONVERSATION_SILENT_REPLY_GUIDANCE = `If you have nothing to add to what has already been said in this group, the entire final assistant reply must be exactly ${NO_RESPONSE}, with no surrounding prose.`;
 
 export function runAllowsSilentEmpty(trigger: string): boolean {
   return trigger === "reaction" || trigger === "routine" || isBackgroundRunTrigger(trigger);

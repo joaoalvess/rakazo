@@ -225,15 +225,18 @@ export async function loadGroupContext(
   };
 }
 
-/** A conversation-group member may stay silent unless the message it answers names it. */
+/**
+ * In a conversation group, a member may stay silent unless a person named it or a colleague
+ * handed it a stage. A colleague's mention allows silence, so a thank-you needs no reply.
+ */
 export function groupConversationAllowsSilence(
   source: { role: string; blocks: readonly MessageBlock[] } | undefined,
   self: { id: string; name: string },
 ): boolean {
   if (!source) return false;
   return !source.blocks.some((block) =>
-    block.kind === "text"
-      ? hasMentionToken(block.text, self.name)
-      : block.kind === "handoff" && block.toBotId === self.id,
+    block.kind === "handoff"
+      ? block.toBotId === self.id
+      : source.role === "user" && block.kind === "text" && hasMentionToken(block.text, self.name),
   );
 }

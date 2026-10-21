@@ -288,7 +288,7 @@ describe("group members roster", () => {
     expect(conversation.split("\n").slice(0, -1)).toEqual(standard.split("\n").slice(0, -1));
     expect(conversation).not.toContain("Never bounce a stage between members.");
     expect(conversation).toContain("Mention @Name in your reply to bring a colleague in");
-    expect(conversation).toContain("answer a colleague who mentions you directly");
+    expect(conversation).toContain("reply directly when a colleague asks you something");
     expect(conversation).toContain("keep handoff_to_bot for transferring a whole stage");
   });
 

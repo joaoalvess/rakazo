@@ -256,6 +256,12 @@ describe("conversation groups", () => {
       false,
     ],
     [
+      "a colleague's thanks that names the bot",
+      "bot",
+      [{ kind: "text", text: "Thanks @Ben" }],
+      true,
+    ],
+    [
       "a handoff to the bot",
       "bot",
       [{ kind: "handoff", fromBotId: "bot-a", toBotId: "bot-b", text: "Take it", hop: 1 }],
