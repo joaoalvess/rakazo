@@ -1412,6 +1412,10 @@ msgstr "Continuar con {0}"
 msgid "Continue with email"
 msgstr "Continuar con el correo"
 
+#: src/pages/GroupPanel.tsx
+msgid "Conversation mode"
+msgstr "Modo conversación"
+
 #: src/components/ComputersUnavailableHint.tsx
 #: src/pages/ModelSettingsOverlay.tsx
 #: src/pages/Onboarding.tsx
@@ -2345,6 +2349,10 @@ msgstr "Todos los días"
 msgid "Every hour"
 msgstr "Cada hora"
 
+#: src/pages/GroupPanel.tsx
+msgid "Every member reads each new message and replies, waits or stays silent."
+msgstr "Cada miembro lee cada mensaje nuevo y responde, espera o guarda silencio."
+
 #: src/pages/RoutineSchedule.tsx
 msgid "Every Monday"
 msgstr "Cada lunes"
@@ -3037,10 +3045,6 @@ msgstr "Miembro"
 #: src/pages/GroupPanel.tsx
 msgid "Members ({0})"
 msgstr ""
-
-#: src/pages/GroupPanel.tsx
-msgid "Members take turns"
-msgstr "Los miembros se turnan"
 
 #: src/pages/KnowledgeSection.tsx
 #: src/pages/MemorySettingsOverlay.tsx

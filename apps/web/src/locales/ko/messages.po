@@ -1412,6 +1412,10 @@ msgstr "{0}(으)로 계속"
 msgid "Continue with email"
 msgstr "이메일로 계속하기"
 
+#: src/pages/GroupPanel.tsx
+msgid "Conversation mode"
+msgstr "대화 모드"
+
 #: src/components/ComputersUnavailableHint.tsx
 #: src/pages/ModelSettingsOverlay.tsx
 #: src/pages/Onboarding.tsx
@@ -2345,6 +2349,10 @@ msgstr "매일"
 msgid "Every hour"
 msgstr "매시간"
 
+#: src/pages/GroupPanel.tsx
+msgid "Every member reads each new message and replies, waits or stays silent."
+msgstr "모든 멤버가 새 메시지를 읽고 답하거나, 기다리거나, 침묵합니다."
+
 #: src/pages/RoutineSchedule.tsx
 msgid "Every Monday"
 msgstr "매주 월요일"
@@ -3037,10 +3045,6 @@ msgstr "멤버"
 #: src/pages/GroupPanel.tsx
 msgid "Members ({0})"
 msgstr ""
-
-#: src/pages/GroupPanel.tsx
-msgid "Members take turns"
-msgstr "멤버가 차례로 답변"
 
 #: src/pages/KnowledgeSection.tsx
 #: src/pages/MemorySettingsOverlay.tsx

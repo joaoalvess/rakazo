@@ -273,7 +273,17 @@ describe("GroupSettings", () => {
 
   const conversationSwitch = () => container.querySelector<HTMLElement>('[role="switch"]')!;
 
-  it("saves the turn-taking switch only when it changed", async () => {
+  it("names the conversation mode switch and explains it on demand", async () => {
+    await render();
+    expect([...container.querySelectorAll("label")].map((label) => label.textContent)).toContain(
+      "Conversation mode",
+    );
+    expect(container.textContent).toContain(
+      "Every member reads each new message and replies, waits or stays silent.",
+    );
+  });
+
+  it("saves the conversation mode switch only when it changed", async () => {
     const onSave = vi.fn(async () => undefined);
     await render({ onSave });
     expect(conversationSwitch().getAttribute("aria-checked")).toBe("false");
@@ -295,7 +305,7 @@ describe("GroupSettings", () => {
     });
   });
 
-  it("starts from the group's turn-taking setting and can turn it off", async () => {
+  it("starts from the group's conversation mode and can turn it off", async () => {
     const onSave = vi.fn(async () => undefined);
     await render({ onSave, group: { ...group, conversationMode: true } });
     expect(conversationSwitch().getAttribute("aria-checked")).toBe("true");

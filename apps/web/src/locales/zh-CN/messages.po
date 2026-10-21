@@ -1412,6 +1412,10 @@ msgstr "通过 {0} 继续"
 msgid "Continue with email"
 msgstr "使用邮箱继续"
 
+#: src/pages/GroupPanel.tsx
+msgid "Conversation mode"
+msgstr "对话模式"
+
 #: src/components/ComputersUnavailableHint.tsx
 #: src/pages/ModelSettingsOverlay.tsx
 #: src/pages/Onboarding.tsx
@@ -2345,6 +2349,10 @@ msgstr "每天"
 msgid "Every hour"
 msgstr "每小时"
 
+#: src/pages/GroupPanel.tsx
+msgid "Every member reads each new message and replies, waits or stays silent."
+msgstr "每位成员都会阅读每条新消息，然后回复、等待或保持沉默。"
+
 #: src/pages/RoutineSchedule.tsx
 msgid "Every Monday"
 msgstr "每周一"
@@ -3037,10 +3045,6 @@ msgstr "成员"
 #: src/pages/GroupPanel.tsx
 msgid "Members ({0})"
 msgstr ""
-
-#: src/pages/GroupPanel.tsx
-msgid "Members take turns"
-msgstr "成员轮流回复"
 
 #: src/pages/KnowledgeSection.tsx
 #: src/pages/MemorySettingsOverlay.tsx

@@ -1412,6 +1412,10 @@ msgstr "{0} के साथ जारी रखें"
 msgid "Continue with email"
 msgstr "ईमेल से जारी रखें"
 
+#: src/pages/GroupPanel.tsx
+msgid "Conversation mode"
+msgstr "बातचीत मोड"
+
 #: src/components/ComputersUnavailableHint.tsx
 #: src/pages/ModelSettingsOverlay.tsx
 #: src/pages/Onboarding.tsx
@@ -2345,6 +2349,10 @@ msgstr "हर दिन"
 msgid "Every hour"
 msgstr "हर घंटे"
 
+#: src/pages/GroupPanel.tsx
+msgid "Every member reads each new message and replies, waits or stays silent."
+msgstr "हर सदस्य हर नया संदेश पढ़ता है और जवाब देता है, इंतज़ार करता है या चुप रहता है।"
+
 #: src/pages/RoutineSchedule.tsx
 msgid "Every Monday"
 msgstr "हर सोमवार"
@@ -3037,10 +3045,6 @@ msgstr "सदस्य"
 #: src/pages/GroupPanel.tsx
 msgid "Members ({0})"
 msgstr ""
-
-#: src/pages/GroupPanel.tsx
-msgid "Members take turns"
-msgstr "सदस्य बारी-बारी से जवाब देते हैं"
 
 #: src/pages/KnowledgeSection.tsx
 #: src/pages/MemorySettingsOverlay.tsx
