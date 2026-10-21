@@ -1,6 +1,11 @@
 import { runContinueJob } from "@rakazo/adapter-kit";
 import { MessageBlock } from "@rakazo/contracts";
-import { botMessageHopExhausted, nextBotMessageHop, renderGroupMembersContext } from "@rakazo/core";
+import {
+  botMessageHopExhausted,
+  hasMentionToken,
+  nextBotMessageHop,
+  renderGroupMembersContext,
+} from "@rakazo/core";
 import {
   appendEventInTransaction,
   createThreadMessageInTransaction,
@@ -211,5 +216,28 @@ export async function loadGroupContext(
     group.name,
     group.members.map((member) => member.bot),
     self,
+    { conversationMode: group.conversationMode },
+  );
+}
+
+/** A conversation-group member may stay silent unless the message it answers names it. */
+export async function groupConversationAllowsSilence(
+  prisma: PrismaClient,
+  groupId: string,
+  self: { id: string; name: string },
+  sourceMessageId: string | null,
+): Promise<boolean> {
+  const [group, source] = await Promise.all([
+    prisma.chatGroup.findUnique({ where: { id: groupId }, select: { conversationMode: true } }),
+    sourceMessageId
+      ? prisma.message.findUnique({ where: { id: sourceMessageId }, select: { blocks: true } })
+      : null,
+  ]);
+  if (!group?.conversationMode) return false;
+  const blocks = MessageBlock.array().safeParse(source?.blocks ?? []).data ?? [];
+  return !blocks.some((block) =>
+    block.kind === "text"
+      ? hasMentionToken(block.text, self.name)
+      : block.kind === "handoff" && block.toBotId === self.id,
   );
 }

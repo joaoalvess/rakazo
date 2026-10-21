@@ -1,6 +1,10 @@
 import type { PrismaClient } from "@rakazo/db";
 import { describe, expect, it, vi } from "vitest";
-import { handoffToGroupBot } from "./group-handoff.js";
+import {
+  groupConversationAllowsSilence,
+  handoffToGroupBot,
+  loadGroupContext,
+} from "./group-handoff.js";
 
 const run = {
   id: "run-a",
@@ -184,4 +188,53 @@ describe("group handoff ownership", () => {
       }),
     );
   });
+});
+
+describe("conversation groups", () => {
+  const self = { id: "bot-b", name: "Ben" };
+
+  function prisma(conversationMode: boolean, sourceBlocks: unknown[] = []) {
+    return {
+      chatGroup: {
+        findUnique: vi.fn(async () => ({
+          id: "group-1",
+          name: "Crew",
+          conversationMode,
+          members: [
+            { bot: { id: "bot-a", name: "Ada", title: "", description: "" } },
+            { bot: { id: "bot-b", name: "Ben", title: "", description: "" } },
+          ],
+        })),
+      },
+      message: { findUnique: vi.fn(async () => ({ blocks: sourceBlocks })) },
+    } as unknown as PrismaClient;
+  }
+
+  it("tells members they are in a conversation only when the group is one", async () => {
+    await expect(loadGroupContext(prisma(true), "group-1", self)).resolves.toContain(
+      "This group is a conversation",
+    );
+    await expect(loadGroupContext(prisma(false), "group-1", self)).resolves.toContain(
+      "Never bounce a stage between members.",
+    );
+  });
+
+  it.each([
+    ["a message that names nobody", true, [{ kind: "text", text: "@Ada what next?" }], true],
+    ["a message that names the bot", true, [{ kind: "text", text: "@Ben what next?" }], false],
+    [
+      "a handoff to the bot",
+      true,
+      [{ kind: "handoff", fromBotId: "bot-a", toBotId: "bot-b", text: "Take it", hop: 1 }],
+      false,
+    ],
+    ["any message outside a conversation", false, [{ kind: "text", text: "what next?" }], false],
+  ])(
+    "decides whether a member may stay silent on %s",
+    async (_label, conversationMode, blocks, allowed) => {
+      await expect(
+        groupConversationAllowsSilence(prisma(conversationMode, blocks), "group-1", self, "m1"),
+      ).resolves.toBe(allowed);
+    },
+  );
 });

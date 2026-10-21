@@ -275,7 +275,11 @@ import {
   updateChildBot,
   updateFleetGroup,
 } from "./fleet-tools.js";
-import { handoffToGroupBot, loadGroupContext } from "./group-handoff.js";
+import {
+  groupConversationAllowsSilence,
+  handoffToGroupBot,
+  loadGroupContext,
+} from "./group-handoff.js";
 import {
   COMPACTION_BATCH_SIZE,
   formatCompactedSummary,
@@ -3888,8 +3892,19 @@ export function createRunExecutor(deps: ExecutorDeps) {
           peerMessage?.intent,
           peerMessage?.repliesToRequest,
         );
+        const groupSilenceAllowed = thread.groupId
+          ? await groupConversationAllowsSilence(
+              deps.prisma,
+              thread.groupId,
+              bot,
+              run.sourceMessageId,
+            )
+          : false;
         const allowSilentEmptyRun =
-          allowSilentPeerMessage || messagingChannelRun || runAllowsSilentEmpty(run.trigger);
+          allowSilentPeerMessage ||
+          messagingChannelRun ||
+          groupSilenceAllowed ||
+          runAllowsSilentEmpty(run.trigger);
         const emptyResponseText = peerMessage
           ? peerMessage.intent === "result" ||
             peerMessage.intent === "status" ||
@@ -4171,10 +4186,15 @@ export function createRunExecutor(deps: ExecutorDeps) {
         );
         const acceptsImages = deps.runtime.describe().capabilities.scripted || modelSeesImages;
         const groupContext = thread.groupId
-          ? await loadGroupContext(deps.prisma, thread.groupId, {
-              id: bot.id,
-              name: bot.name,
-            })
+          ? [
+              await loadGroupContext(deps.prisma, thread.groupId, {
+                id: bot.id,
+                name: bot.name,
+              }),
+              groupSilenceAllowed ? GROUP_CONVERSATION_SILENT_REPLY_GUIDANCE : undefined,
+            ]
+              .filter(Boolean)
+              .join("\n\n")
           : undefined;
         const hasMessagingIdentity = deps.messaging
           ? await deps.messaging.hasIdentity(bot.id)
@@ -9186,6 +9206,8 @@ export function longWorkProgressGuidance(maxLength = messageUserMaxLength()): st
 export const ROUTINE_SILENT_REPLY_GUIDANCE = `If this routine's prompt says to stay silent when there is nothing to report, the entire final assistant reply must be exactly ${NO_RESPONSE} — no surrounding prose, no variants, no progress updates, no all-clear, and no meta note that you are staying silent. Do not call message_user unless you have something to report.`;
 
 export const REACTION_SILENT_REPLY_GUIDANCE = `The user reacted with an emoji to your message. Reply only if the reaction calls for it, such as a correction after 👎, a go-ahead on something you proposed, or a question. Otherwise the entire final assistant reply must be exactly ${NO_RESPONSE}, with no message_user call.`;
+
+export const GROUP_CONVERSATION_SILENT_REPLY_GUIDANCE = `Nobody in this group named you in the message you are answering. If you have nothing to add to what your colleagues already said, the entire final assistant reply must be exactly ${NO_RESPONSE}, with no surrounding prose.`;
 
 export function runAllowsSilentEmpty(trigger: string): boolean {
   return trigger === "reaction" || trigger === "routine" || isBackgroundRunTrigger(trigger);

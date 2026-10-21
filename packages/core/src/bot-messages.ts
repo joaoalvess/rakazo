@@ -123,6 +123,7 @@ export function renderGroupMembersContext(
   groupName: string,
   members: readonly BotAddress[],
   self: Pick<BotAddress, "id" | "name">,
+  options: { conversationMode?: boolean } = {},
 ): string {
   const name = escapeDirectoryField(groupName.trim());
   const selfName = escapeDirectoryField(self.name.trim());
@@ -135,7 +136,11 @@ export function renderGroupMembersContext(
     ...formatBotRosterLines(members),
     "</group_members>",
     "Post in this shared thread. When another teammate is genuinely needed for a distinct next stage, use handoff_to_bot instead of telling the user to switch chats.",
-    "A handoff transfers ownership. Complete a stage handed to you yourself, then post its result here. Do not hand it back merely to report or ask the previous bot to do the same work. Never bounce a stage between members. One bot owns each stage.",
+    `A handoff transfers ownership. Complete a stage handed to you yourself, then post its result here. Do not hand it back merely to report or ask the previous bot to do the same work. ${
+      options.conversationMode
+        ? "This group is a conversation: members reply in turn and read each other's messages. Mention @Name in your reply to bring a colleague in, answer a colleague who mentions you directly, and keep handoff_to_bot for transferring a whole stage."
+        : "Never bounce a stage between members. One bot owns each stage."
+    }`,
   ].join("\n");
 }
 
