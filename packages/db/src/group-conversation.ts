@@ -130,17 +130,24 @@ async function pauseLine(
       text: `Bots paused this conversation after ${groupConversationMaxChainMessages()} messages. Send a message to continue.`,
     };
   }
+  const clientNonce = `${HOUR_PAUSE_NONCE_PREFIX}${input.messageId}`;
+  // A run that outlived the hour can hand over a reply that already paused the group.
   const posted = await tx.message.findFirst({
     where: {
       threadId: input.threadId,
-      clientNonce: { startsWith: HOUR_PAUSE_NONCE_PREFIX },
-      createdAt: { gte: new Date(input.now.getTime() - HOUR_MS) },
+      OR: [
+        { clientNonce },
+        {
+          clientNonce: { startsWith: HOUR_PAUSE_NONCE_PREFIX },
+          createdAt: { gte: new Date(input.now.getTime() - HOUR_MS) },
+        },
+      ],
     },
     select: { id: true },
   });
   if (posted) return undefined;
   return {
-    clientNonce: `${HOUR_PAUSE_NONCE_PREFIX}${input.messageId}`,
+    clientNonce,
     text: `Bots paused after ${groupConversationMaxMessagesPerHour()} messages in the last hour. They reply to each other again as the hour clears.`,
   };
 }

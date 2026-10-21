@@ -383,6 +383,37 @@ describePostgres("conversation groups (PostgreSQL)", () => {
       ).toEqual([{ trigger: "follow_up", sourceMessageId: named.id }]);
     }));
 
+  it("never repeats an hourly pause line when it hands over a reply it paused on", () =>
+    fixture(async () => {
+      const hourAgo = (offset: number) => new Date(Date.now() - 60 * 60 * 1000 - offset);
+      await prisma.message.updateMany({
+        where: { threadId, clientNonce: { startsWith: "group-pause:hour:" } },
+        data: { createdAt: hourAgo(60_000) },
+      });
+      const question = await personSays("Late night?");
+      const [adaRun, benRun, cyRun] = await wakeEveryone(question, "Late night?");
+      await finish(cyRun!.id, { decision: "wait" });
+      const posted = await prisma.run.count({
+        where: {
+          threadId,
+          conversationDecision: { in: ["speak", "handoff"] },
+          completedAt: { gte: new Date(Date.now() - 60 * 60 * 1000) },
+        },
+      });
+      process.env.GROUP_CONVERSATION_MAX_MESSAGES_PER_HOUR = String(posted + 1);
+
+      await expect(finish(adaRun!.id, { text: "Still up." })).resolves.toEqual([]);
+      const adaReply = await replyOf(adaRun!.id);
+      const [line] = (await pauseLines()).slice(-1);
+      expect(line?.clientNonce).toBe(`group-pause:hour:${adaReply.id}`);
+      // A run that outlived the hour is handed the same reply over the budget again.
+      await prisma.message.update({ where: { id: line!.id }, data: { createdAt: hourAgo(0) } });
+      const before = (await pauseLines()).length;
+
+      await expect(finish(benRun!.id, { decision: "wait" })).resolves.toEqual([]);
+      expect(await pauseLines()).toHaveLength(before);
+    }));
+
   it("records nothing and wakes nobody outside a live conversation group", () =>
     fixture(async () => {
       await prisma.chatGroup.update({ where: { id: groupId }, data: { conversationMode: false } });
