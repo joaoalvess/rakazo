@@ -2577,8 +2577,9 @@ describeJourneys("required product journeys", () => {
     expect(remainingBotIds).not.toContain(artifactOwnerId);
   });
 
-  it("54b: conversation groups take turns, follow mentions to the hop cap, and allow silence", async () => {
+  it("54b: conversation groups wake every listening member to speak, wait or pass within budgets", async () => {
     const owner = await signup(app, `conversation-g-${stamp}@rakazo.test`, "Conversation Groups");
+    const me = await rpc<Me>(app, owner, "me");
     const bot = (name: string) =>
       rpc<Bot>(app, owner, "bots/create", {
         name,
@@ -2596,92 +2597,216 @@ describeJourneys("required product journeys", () => {
       rpc(app, owner, "groups/update", { groupId: group.id, conversationMode: true }),
     ).resolves.toMatchObject({ conversationMode: true });
     const threadId = group.threadId;
-    const sendAndSettle = async (text: string) => {
+    const settle = () =>
+      waitForDatabase(
+        async () =>
+          (await prisma.run.count({
+            where: { threadId, status: { in: [...ACTIVE_RUN_STATUSES] } },
+          })) === 0,
+      );
+    const send = async (text: string) => {
       const { runId } = await rpc<{ runId: string }>(app, owner, "threads/send", {
         groupId: group.id,
         text,
       });
       const { sourceMessage } = await prisma.run.findUniqueOrThrow({
         where: { id: runId },
-        select: { sourceMessage: { select: { id: true, seq: true, createdAt: true } } },
+        select: { sourceMessage: { select: { id: true, seq: true } } },
       });
-      await waitForDatabase(
-        async () =>
-          (await prisma.run.count({
-            where: { threadId, status: { in: [...ACTIVE_RUN_STATUSES] } },
-          })) === 0,
-      );
       return sourceMessage!;
     };
+    const sendAndSettle = async (text: string) => {
+      const message = await send(text);
+      await settle();
+      return message;
+    };
     const repliesAfter = async (seq: number) =>
+      (
+        await prisma.message.findMany({
+          where: { threadId, role: "bot", seq: { gt: seq } },
+          orderBy: { seq: "asc" },
+        })
+      ).filter((message) =>
+        (message.blocks as MessageBlock[]).some((block) => block.kind === "text"),
+      );
+    const decisions = async (chainMessageId: string) => {
+      const runs = await prisma.run.findMany({
+        where: { threadId, groupChainMessageId: chainMessageId },
+        orderBy: { createdAt: "asc" },
+        select: { botId: true, conversationDecision: true },
+      });
+      return Object.fromEntries(
+        [ari, bo, cy].map((member) => [
+          member.name,
+          runs.filter((run) => run.botId === member.id).map((run) => run.conversationDecision),
+        ]),
+      );
+    };
+    const pauseLines = (after: number) =>
       prisma.message.findMany({
-        where: { threadId, role: "bot", seq: { gt: seq } },
+        where: {
+          threadId,
+          role: "system",
+          clientNonce: { startsWith: "group-pause:" },
+          seq: { gt: after },
+        },
         orderBy: { seq: "asc" },
+        select: { clientNonce: true, blocks: true },
+      });
+    const budgetNames = [
+      "GROUP_CONVERSATION_MAX_CHAIN_MESSAGES",
+      "GROUP_CONVERSATION_MAX_MESSAGES_PER_HOUR",
+    ] as const;
+    const previousBudgets = budgetNames.map((name) => process.env[name]);
+    const setBudgets = (chain?: number, hour?: number) =>
+      [chain, hour].forEach((value, index) => {
+        if (value === undefined) delete process.env[budgetNames[index]!];
+        else process.env[budgetNames[index]!] = String(value);
+      });
+    try {
+      const question = await sendAndSettle("conversation fixture Ari:speak Cy:wait / Cy:speak");
+      expect((await repliesAfter(question.seq)).map((message) => message.botId)).toEqual([
+        ari.id,
+        cy.id,
+      ]);
+      expect(await decisions(question.id)).toEqual({
+        Ari: ["speak", "pass"],
+        Bo: ["pass"],
+        Cy: ["wait", "speak"],
       });
 
-    const question = await sendAndSettle("what should we build next?");
-    const turns = await prisma.run.findMany({
-      where: { threadId, sourceMessageId: question.id },
-      orderBy: { createdAt: "asc" },
-    });
-    expect(turns.map((run) => [run.botId, run.status])).toEqual([
-      [ari.id, "completed"],
-      [bo.id, "completed"],
-      [cy.id, "completed"],
-    ]);
-    expect((await repliesAfter(question.seq)).map((message) => message.botId)).toEqual([
-      ari.id,
-      bo.id,
-      cy.id,
-    ]);
-
-    const previousMaxHops = process.env.BOT_MESSAGE_MAX_HOPS;
-    process.env.BOT_MESSAGE_MAX_HOPS = "3";
-    try {
-      const ping = await sendAndSettle("@Ari start the ping-pong fixture with Bo");
-      expect((await repliesAfter(ping.seq)).map((message) => message.botId)).toEqual([
-        ari.id,
-        bo.id,
+      const mention = await sendAndSettle("conversation fixture Ari:speak@Bo / Bo:speak");
+      expect((await repliesAfter(mention.seq)).map((message) => message.botId)).toEqual([
         ari.id,
         bo.id,
       ]);
-      expect(
-        await prisma.run.count({
-          where: {
-            threadId,
-            clientNonce: { startsWith: "group-mention:" },
-            createdAt: { gte: ping.createdAt },
-          },
+      expect(await decisions(mention.id)).toEqual({
+        Ari: ["speak", "pass"],
+        Bo: ["pass", "speak"],
+        Cy: ["pass"],
+      });
+
+      const scheduleDeps = { prisma: appPrisma, events: createThreadEvents(appPrisma), jobs };
+      const scheduled = await runAsSystem("background job run.continue", () =>
+        createScheduleFromTool(scheduleDeps, {
+          spaceId: me.spaceId,
+          botId: ari.id,
+          userId: me.userId,
+          threadId,
+          name: "Standup",
+          prompt: "conversation fixture Ari:speak / Bo:speak",
+          schedule: { delaySeconds: 30 },
         }),
-      ).toBe(3);
+      );
+      if (!("ok" in scheduled) || !scheduled.ok) throw new Error("group schedule create failed");
+      const dueAt = new Date(Date.now() - 1_000);
+      await prisma.routine.update({
+        where: { id: scheduled.routineId },
+        data: { nextRunAt: dueAt },
+      });
+      await runAsSystem("background job routine.wakeup", () =>
+        executor.wakeRoutine(scheduled.routineId, dueAt.toISOString()),
+      );
+      await waitForDatabase(
+        async () => (await prisma.run.count({ where: { routineId: scheduled.routineId } })) === 1,
+      );
+      await settle();
+      const routineRun = await prisma.run.findFirstOrThrow({
+        where: { routineId: scheduled.routineId },
+        select: { groupChainMessageId: true, conversationDecision: true },
+      });
+      const routineReply = await prisma.message.findFirstOrThrow({
+        where: { threadId, id: routineRun.groupChainMessageId ?? "" },
+        select: { botId: true, seq: true },
+      });
+      expect(routineReply.botId).toBe(ari.id);
+      expect(routineRun.conversationDecision).toBe("speak");
+      expect(await decisions(routineRun.groupChainMessageId!)).toEqual({
+        Ari: ["speak", "pass"],
+        Bo: ["speak"],
+        Cy: ["pass"],
+      });
+
+      setBudgets(3, 1_000);
+      const volley = await sendAndSettle("conversation fixture loop Ari:speak Bo:speak");
+      expect(await repliesAfter(volley.seq)).toHaveLength(3);
+      expect(await pauseLines(volley.seq)).toEqual([
+        {
+          clientNonce: `group-pause:chain:${volley.id}`,
+          blocks: [
+            {
+              kind: "meta",
+              text: "Bots paused this conversation after 3 messages. Send a message to continue.",
+            },
+          ],
+        },
+      ]);
+
+      setBudgets(1_000, 1_000);
+      const endless = await send("conversation fixture loop Ari:speak Bo:speak");
+      await waitForDatabase(async () => (await repliesAfter(endless.seq)).length >= 2);
+      await rpc(app, owner, "threads/stop", { groupId: group.id });
+      await settle();
+      const stopped = await repliesAfter(endless.seq);
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      expect(await repliesAfter(endless.seq)).toHaveLength(stopped.length);
+      expect(
+        await prisma.run.count({ where: { threadId, status: { in: [...ACTIVE_RUN_STATUSES] } } }),
+      ).toBe(0);
+      expect(await pauseLines(endless.seq)).toEqual([]);
+
+      const posted = await prisma.run.count({
+        where: {
+          threadId,
+          conversationDecision: { in: ["speak", "handoff"] },
+          completedAt: { gte: new Date(Date.now() - 60 * 60_000) },
+        },
+      });
+      setBudgets(undefined, posted + 1);
+      const busyHour = await sendAndSettle("conversation fixture Ari:speak Cy:wait / Cy:speak");
+      expect((await repliesAfter(busyHour.seq)).map((message) => message.botId)).toEqual([ari.id]);
+      expect(await pauseLines(busyHour.seq)).toEqual([
+        {
+          clientNonce: expect.stringMatching(/^group-pause:hour:/),
+          blocks: [
+            {
+              kind: "meta",
+              text: `Bots paused after ${posted + 1} messages in the last hour. They reply to each other again as the hour clears.`,
+            },
+          ],
+        },
+      ]);
+      const stillHeard = await sendAndSettle("conversation fixture Bo:speak");
+      expect(await decisions(stillHeard.id)).toEqual({
+        Ari: ["pass"],
+        Bo: ["speak"],
+        Cy: ["pass"],
+      });
+      expect(await pauseLines(stillHeard.seq)).toEqual([]);
+
+      await expect(
+        rpc(app, owner, "groups/update", { groupId: group.id, conversationMode: false }),
+      ).resolves.toMatchObject({ conversationMode: false });
+      const plain = await sendAndSettle("conversation fixture Ari:speak Bo:speak Cy:speak");
+      expect(
+        await prisma.run.findMany({
+          where: { threadId, sourceMessageId: plain.id },
+          select: { botId: true, groupChainMessageId: true, conversationDecision: true },
+        }),
+      ).toEqual([{ botId: ari.id, groupChainMessageId: null, conversationDecision: null }]);
+      expect((await repliesAfter(plain.seq)).map((message) => message.botId)).toEqual([ari.id]);
       expect(
         await prisma.run.count({
-          where: { threadId, botId: cy.id, createdAt: { gte: ping.createdAt } },
+          where: { threadId, sourceMessage: { seq: { gt: plain.seq } } },
         }),
       ).toBe(0);
     } finally {
-      if (previousMaxHops === undefined) delete process.env.BOT_MESSAGE_MAX_HOPS;
-      else process.env.BOT_MESSAGE_MAX_HOPS = previousMaxHops;
+      budgetNames.forEach((name, index) => {
+        const previous = previousBudgets[index];
+        if (previous === undefined) delete process.env[name];
+        else process.env[name] = previous;
+      });
     }
-
-    const quiet = await sendAndSettle("silent routine fixture");
-    expect(
-      (
-        await prisma.run.findMany({
-          where: { threadId, sourceMessageId: quiet.id },
-          orderBy: { createdAt: "asc" },
-        })
-      ).map((run) => [run.botId, run.status]),
-    ).toEqual([
-      [ari.id, "completed"],
-      [bo.id, "completed"],
-      [cy.id, "completed"],
-    ]);
-    expect(
-      (await repliesAfter(quiet.seq)).flatMap((message) =>
-        (message.blocks as MessageBlock[]).filter((block) => block.kind !== "steps"),
-      ),
-    ).toEqual([]);
   });
 
   it("17: teach a task end to end", async () => {

@@ -314,13 +314,25 @@ describe("inferScript save_shared_memory", () => {
   });
 });
 
-describe("inferScript ping-pong", () => {
-  it("mentions the named peer first, then whoever mentioned it", () => {
-    expect(inferScript("@Ari start the ping-pong fixture with Bo")).toEqual([
-      { assistant: "@Bo ping-pong fixture", complete: true },
+describe("inferScript conversation fixture", () => {
+  const prompt = "conversation fixture Ari:speak Bo:wait / Bo:speak@Ari / Ari:pass";
+
+  it("plays each member's part of the current round", () => {
+    expect(inferScript(prompt, undefined, "Ari")).toEqual([
+      { assistant: "conversation fixture Bo:speak@Ari / Ari:pass", complete: true },
     ]);
-    expect(inferScript("[Bo mentioned you]: @Ari ping-pong fixture")).toEqual([
-      { assistant: "@Bo ping-pong fixture", complete: true },
+    expect(inferScript(prompt, undefined, "Bo")).toEqual([{ assistant: "WAIT", complete: true }]);
+    expect(inferScript(prompt, undefined, "Cy")).toEqual([
+      { assistant: "NO_RESPONSE", complete: true },
+    ]);
+    expect(
+      inferScript("[Ari]: conversation fixture Bo:speak@Ari / Ari:pass", undefined, "Bo"),
+    ).toEqual([{ assistant: "@Ari conversation fixture Ari:pass", complete: true }]);
+  });
+
+  it("repeats a looped round", () => {
+    expect(inferScript("conversation fixture loop Ari:speak", undefined, "Ari")).toEqual([
+      { assistant: "conversation fixture loop Ari:speak", complete: true },
     ]);
   });
 });

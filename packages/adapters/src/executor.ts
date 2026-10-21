@@ -4542,7 +4542,9 @@ export function createRunExecutor(deps: ExecutorDeps) {
         let handedOff = false;
         let progressRedactor = createStreamingRedactor(runSecrets);
         const scripted = deps.runtime.describe().capabilities.scripted;
-        const script = scripted ? inferScript(task.prompt, takeoverResume?.checkpoint) : undefined;
+        const script = scripted
+          ? inferScript(task.prompt, takeoverResume?.checkpoint, bot.name)
+          : undefined;
         const flushProgress = async () => {
           // Routines and conversation-group members may finish silently. Do not leak
           // narration or a partial silence sentinel before the final outcome is known.
