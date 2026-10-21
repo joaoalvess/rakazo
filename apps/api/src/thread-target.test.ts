@@ -3643,7 +3643,12 @@ describe("sendThreadMessage", () => {
 });
 
 describe("conversation group sends", () => {
-  function sendToGroup(options: { conversationMode: boolean; text: string; busy?: boolean }) {
+  function sendToGroup(options: {
+    conversationMode: boolean;
+    text: string;
+    busy?: boolean;
+    waiting?: boolean;
+  }) {
     let messageSeq = 0;
     let eventSeq = 0;
     const busyRun = {
@@ -3651,6 +3656,13 @@ describe("conversation group sends", () => {
       taskId: "task-busy",
       botId: "bot-a",
       status: "running",
+      trigger: "user",
+    };
+    const waitingRun = {
+      id: "run-waiting-b",
+      taskId: "task-waiting",
+      botId: "bot-b",
+      status: "waiting_input",
       trigger: "user",
     };
     const tx = {
@@ -3661,7 +3673,11 @@ describe("conversation group sends", () => {
       },
       message: {
         findFirst: vi.fn().mockResolvedValue(null),
-        findMany: vi.fn().mockResolvedValue([]),
+        findMany: vi.fn(async ({ where }: { where: { runId?: string } }) =>
+          where.runId === waitingRun.id
+            ? [{ id: "ask-b", blocks: [{ kind: "ask", text: "Which city?", status: "pending" }] }]
+            : [],
+        ),
         update: vi.fn(),
         create: vi.fn().mockResolvedValue({
           id: "msg-1",
@@ -3678,9 +3694,16 @@ describe("conversation group sends", () => {
       },
       run: {
         findMany: vi.fn(async ({ where }: { where: { status?: unknown } }) =>
-          options.busy && typeof where.status === "object" ? [busyRun] : [],
+          typeof where.status === "object"
+            ? [...(options.busy ? [busyRun] : []), ...(options.waiting ? [waitingRun] : [])]
+            : [],
         ),
-        findUnique: vi.fn().mockResolvedValue({ status: "queued", startedAt: null }),
+        findFirst: vi.fn().mockResolvedValue({ taskId: waitingRun.taskId }),
+        updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+        findUnique: vi.fn(async ({ where }: { where: { id: string } }) => ({
+          status: where.id === waitingRun.id ? "cancelled" : "queued",
+          startedAt: null,
+        })),
         create: vi.fn(async ({ data }: { data: { botId: string } }) => ({
           id: `run-${data.botId}`,
           taskId: "task-1",
@@ -3688,7 +3711,11 @@ describe("conversation group sends", () => {
           status: "queued",
         })),
       },
-      task: { create: vi.fn().mockResolvedValue({ id: "task-1" }) },
+      task: {
+        create: vi.fn().mockResolvedValue({ id: "task-1" }),
+        updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+      },
+      attempt: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
       event: {
         create: vi.fn().mockResolvedValue({ id: "event-1", seq: 1, createdAt: new Date() }),
       },
@@ -3768,6 +3795,29 @@ describe("conversation group sends", () => {
     expect(createdRuns(tx)).toEqual([
       expect.objectContaining({ botId: "bot-b", groupChainMessageId: "msg-1" }),
     ]);
+  });
+
+  const retiredRunIds = (tx: ReturnType<typeof sendToGroup>["tx"]) =>
+    tx.run.updateMany.mock.calls.map(([args]) => (args as { where: { id: string } }).where.id);
+
+  it("keeps a member's question pending when a person's message does not name it", async () => {
+    const { tx, result } = sendToGroup({ conversationMode: true, text: "Paris", waiting: true });
+
+    await expect(result).resolves.toMatchObject({ runIds: ["run-bot-a"] });
+    expect(retiredRunIds(tx)).toEqual([]);
+    expect(createdRuns(tx)).toEqual([expect.objectContaining({ botId: "bot-a" })]);
+  });
+
+  it("retires a member's question when a person's message names it", async () => {
+    const { tx, result } = sendToGroup({
+      conversationMode: true,
+      text: "@Beta Paris",
+      waiting: true,
+    });
+
+    await result;
+    expect(retiredRunIds(tx)).toEqual(["run-waiting-b"]);
+    expect(createdRuns(tx).map((run) => run.botId)).toEqual(["bot-a", "bot-b"]);
   });
 });
 

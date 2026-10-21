@@ -15,6 +15,7 @@ import {
   ACTIVE_RUN_STATUSES,
   BACKGROUND_RUN_TRIGGERS,
   callIdFromClientNonce,
+  hasMentionToken,
   isConversationalRun,
   messageReaction,
   projectMessages,
@@ -895,6 +896,15 @@ export async function sendThreadMessage(
       });
       const activeByBotId = new Map<string, (typeof activeRuns)[number]>();
       const answeredByBotId = new Map<string, Array<(typeof activeRuns)[number]>>();
+      // In a conversation group a message answers the latest question or retires the questions of
+      // members it names; the other members' questions stay pending.
+      const pausedBotIds = new Set<string>();
+      const namesMember = (botId: string) =>
+        mentionTargets.botMentionIds.includes(botId) ||
+        hasMentionToken(input.text ?? "", "everyone") ||
+        members.some(
+          (member) => member.botId === botId && hasMentionToken(input.text ?? "", member.name),
+        );
       for (const run of activeRuns) {
         if (run.status === "waiting_input") {
           const answered = await answerWaitingRunWithTextInTransaction(tx, {
@@ -909,6 +919,8 @@ export async function sendThreadMessage(
             const queuedForBot = answeredByBotId.get(run.botId) ?? [];
             queuedForBot.push({ ...run, status: "queued" });
             answeredByBotId.set(run.botId, queuedForBot);
+          } else if (conversationMode && !namesMember(run.botId)) {
+            pausedBotIds.add(run.botId);
           } else {
             await retireWaitingQuestionInTransaction(tx, {
               spaceId: actor.spaceId,
@@ -933,6 +945,7 @@ export async function sendThreadMessage(
           runs.push(...answered);
           continue;
         }
+        if (pausedBotIds.has(botId)) continue;
         const active = activeByBotId.get(botId);
         if (active) {
           await tx.steeringMessage.create({
