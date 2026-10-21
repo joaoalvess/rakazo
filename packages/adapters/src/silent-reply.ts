@@ -3,6 +3,9 @@ import type { MessageBlock } from "@rakazo/contracts";
 /** Exact token a silent run must emit as its entire final assistant reply. */
 export const NO_RESPONSE = "NO_RESPONSE";
 
+/** Exact token a conversation-group member emits to stay silent until the next message. */
+export const WAIT = "WAIT";
+
 function textBlocksOf(
   blocks: readonly MessageBlock[],
 ): Array<Extract<MessageBlock, { kind: "text" }>> {
@@ -87,6 +90,23 @@ export function stripNoResponseReply(
     assembled: "",
     blocks: blocks.filter((block) => block.kind !== "text"),
   };
+}
+
+const WAIT_ONLY = /^(?:WAIT\s*)+$/;
+
+/**
+ * Conversation-group runs only: a final reply that is exactly `WAIT` posts nothing, like
+ * `NO_RESPONSE`, and returns undefined for any other reply.
+ */
+export function stripWaitReply(
+  assembled: string,
+  blocks: MessageBlock[],
+): { assembled: string; blocks: MessageBlock[] } | undefined {
+  const assembledTrimmed = assembled.trim();
+  const blockText = joinedText(blocks).trim();
+  if (!WAIT_ONLY.test(assembledTrimmed || blockText)) return undefined;
+  if (assembledTrimmed && blockText && !WAIT_ONLY.test(blockText)) return undefined;
+  return { assembled: "", blocks: blocks.filter((block) => block.kind !== "text") };
 }
 
 /**

@@ -9,7 +9,11 @@ import {
   buildBotMessageWakePrompt,
   clampBotMessage,
   DEFAULT_BOT_MESSAGE_MAX_HOPS,
+  DEFAULT_GROUP_CONVERSATION_MAX_CHAIN_MESSAGES,
+  DEFAULT_GROUP_CONVERSATION_MAX_MESSAGES_PER_HOUR,
   formatBotRosterLines,
+  groupConversationMaxChainMessages,
+  groupConversationMaxMessagesPerHour,
   nextBotMessageHop,
   renderBotDirectory,
   renderGroupMembersContext,
@@ -91,6 +95,32 @@ describe("hop bounding", () => {
       hop = nextBotMessageHop(hop);
     }
     expect(delivered).toBe(DEFAULT_BOT_MESSAGE_MAX_HOPS);
+  });
+});
+
+describe("conversation group budgets", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  it.each([
+    [
+      "GROUP_CONVERSATION_MAX_CHAIN_MESSAGES",
+      groupConversationMaxChainMessages,
+      DEFAULT_GROUP_CONVERSATION_MAX_CHAIN_MESSAGES,
+    ],
+    [
+      "GROUP_CONVERSATION_MAX_MESSAGES_PER_HOUR",
+      groupConversationMaxMessagesPerHour,
+      DEFAULT_GROUP_CONVERSATION_MAX_MESSAGES_PER_HOUR,
+    ],
+  ] as const)("reads %s and falls back to its default", (name, read, fallback) => {
+    vi.stubEnv(name, undefined);
+    expect(read()).toBe(fallback);
+    vi.stubEnv(name, " 12 ");
+    expect(read()).toBe(12);
+    for (const value of ["", "0", "-1", "2.5", "ten"]) {
+      vi.stubEnv(name, value);
+      expect(read()).toBe(fallback);
+    }
   });
 });
 
@@ -287,9 +317,10 @@ describe("group members roster", () => {
     });
     expect(conversation.split("\n").slice(0, -1)).toEqual(standard.split("\n").slice(0, -1));
     expect(conversation).not.toContain("Never bounce a stage between members.");
-    expect(conversation).toContain("Mention @Name in your reply to bring a colleague in");
-    expect(conversation).toContain("reply directly when a colleague asks you something");
-    expect(conversation).toContain("keep handoff_to_bot for transferring a whole stage");
+    expect(conversation).toContain("every member reads each new message");
+    expect(conversation).toContain("colleagues may be answering at the same time");
+    expect(conversation).toContain("Mention a colleague as @Exact Name");
+    expect(conversation).toContain("use handoff_to_bot only to transfer a whole stage");
   });
 
   it("treats group roster fields as untrusted prompt data", () => {

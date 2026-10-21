@@ -37,6 +37,8 @@ async function runTurn(
     splitText?: boolean;
     priorProgressText?: string;
     runtimeEvents?: AgentRuntimeEvent[];
+    /** A long turn in a group thread with this conversation mode. */
+    conversationMode?: boolean;
   } = {},
 ) {
   vi.mocked(loadBotMessageContext).mockResolvedValue({
@@ -59,7 +61,9 @@ async function runTurn(
     trigger: options.trigger ?? (silent ? "bot_message" : "user"),
     sourceMessageId: "source-1",
     leaseFence: 0,
+    startedAt: options.conversationMode === undefined ? undefined : new Date(Date.now() - 120_000),
   };
+  const grouped = options.conversationMode !== undefined;
   const runtimeRun = vi.fn(async function* (_request: AgentRunRequest) {
     if (options.runtimeEvents) {
       yield* options.runtimeEvents;
@@ -114,12 +118,24 @@ async function runTurn(
     thread: {
       findUniqueOrThrow: vi.fn(async () => ({
         id: run.threadId,
-        groupId: null,
+        groupId: grouped ? "group-1" : null,
         historyCompactionSummary: null,
         historyCompactedUpToSeq: null,
         nextMessageSeq: 3,
       })),
+      update: vi.fn(async () => ({ nextMessageSeq: 4, nextEventSeq: 5 })),
     },
+    chatGroup: {
+      findUnique: vi.fn(async () => ({
+        id: "group-1",
+        name: "Crew",
+        conversationMode: options.conversationMode,
+        members: ["Assistant", "Peer"].map((name, index) => ({
+          bot: { id: `bot-${index + 1}`, name, title: "", description: "" },
+        })),
+      })),
+    },
+    event: { create: vi.fn(async () => ({ seq: 5, threadId: run.threadId })) },
     message: {
       findMany: vi.fn(async ({ where }: { where: { runId?: string } }) =>
         where.runId === run.id && options.priorProgressText
@@ -129,8 +145,28 @@ async function runTurn(
                 clientNonce: userProgressClientNonce(run.id),
               },
             ]
-          : [],
+          : grouped && where.runId === undefined
+            ? [
+                {
+                  id: run.sourceMessageId,
+                  threadId: run.threadId,
+                  seq: 2,
+                  role: "user",
+                  botId: null,
+                  runId: null,
+                  blocks: [{ kind: "text", text: "Look again" }],
+                  createdAt: new Date(),
+                  replyToMessageId: null,
+                  replyQuote: null,
+                  replyTo: null,
+                },
+              ]
+            : [],
       ),
+      create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => ({
+        id: "progress-1",
+        ...data,
+      })),
       findUnique: vi.fn(async () =>
         run.trigger === "messaging"
           ? { blocks: [{ kind: "channel_message", channelId: "channel-1" }] }
@@ -195,7 +231,7 @@ async function runTurn(
     home: { commit: vi.fn(async () => "fixture-revision") },
     memory: { read: async () => ({ documents: [] }) },
     memoryProviders: { resolve: async () => null },
-    events: { append, finalizeRun },
+    events: { append, finalizeRun, notify: vi.fn(async () => undefined) },
     jobs: { enqueue: vi.fn(async () => undefined) },
     secrets,
   } as unknown as Parameters<typeof createRunExecutor>[0]);
@@ -203,7 +239,7 @@ async function runTurn(
   await executor.continueRun(run.id, "worker-1");
   expect(runtimeRun).toHaveBeenCalled();
   expect(finalizeRun).not.toHaveBeenCalledWith(expect.objectContaining({ outcome: "failed" }));
-  return { finalizeRun, append };
+  return { finalizeRun, append, prisma };
 }
 
 describe.each(["routine", "reaction", "bot_message", "messaging"])(
@@ -550,4 +586,29 @@ describe("a stray NO_RESPONSE on runs that must reply", () => {
     });
     expect(savedText(finalizeRun)).toBe("NO_RESPONSE");
   });
+});
+
+describe("narration on long conversation-group turns", () => {
+  it.each([
+    [true, []],
+    [false, ["I will check that."]],
+  ])(
+    "posts durable narration only when the member must reply (conversation mode %s)",
+    async (conversationMode, posted) => {
+      const { prisma, finalizeRun } = await runTurn("NO_RESPONSE", false, undefined, [], "fyi", {
+        conversationMode,
+      });
+      expect(
+        prisma.message.create.mock.calls.map(
+          ([args]) =>
+            (args.data.blocks as MessageBlock[]).find((block) => block.kind === "text")?.text,
+        ),
+      ).toEqual(posted);
+      if (conversationMode) {
+        expect(
+          finalizeRun.mock.calls[0]![0].blocks.filter((block) => block.kind === "text"),
+        ).toEqual([]);
+      }
+    },
+  );
 });

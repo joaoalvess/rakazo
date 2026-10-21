@@ -1420,6 +1420,10 @@ msgstr "המשך עם {0}"
 msgid "Continue with email"
 msgstr "המשך עם אימייל"
 
+#: src/pages/GroupPanel.tsx
+msgid "Conversation mode"
+msgstr "מצב שיחה"
+
 #: src/components/ComputersUnavailableHint.tsx
 #: src/pages/ModelSettingsOverlay.tsx
 #: src/pages/Onboarding.tsx
@@ -2353,6 +2357,10 @@ msgstr "כל יום"
 msgid "Every hour"
 msgstr "כל שעה"
 
+#: src/pages/GroupPanel.tsx
+msgid "Every member reads each new message and replies, waits or stays silent."
+msgstr "כל חבר קורא כל הודעה חדשה ומשיב, ממתין או שותק."
+
 #: src/pages/RoutineSchedule.tsx
 msgid "Every Monday"
 msgstr "כל יום שני"
@@ -3049,10 +3057,6 @@ msgstr "חבר"
 #: src/pages/GroupPanel.tsx
 msgid "Members ({0})"
 msgstr ""
-
-#: src/pages/GroupPanel.tsx
-msgid "Members take turns"
-msgstr "החברים עונים לפי התור"
 
 #: src/pages/KnowledgeSection.tsx
 #: src/pages/MemorySettingsOverlay.tsx

@@ -1420,6 +1420,10 @@ msgstr "{0} ile devam et"
 msgid "Continue with email"
 msgstr "E-posta ile devam et"
 
+#: src/pages/GroupPanel.tsx
+msgid "Conversation mode"
+msgstr "Sohbet modu"
+
 #: src/components/ComputersUnavailableHint.tsx
 #: src/pages/ModelSettingsOverlay.tsx
 #: src/pages/Onboarding.tsx
@@ -2353,6 +2357,10 @@ msgstr "Her gün"
 msgid "Every hour"
 msgstr "Her saat"
 
+#: src/pages/GroupPanel.tsx
+msgid "Every member reads each new message and replies, waits or stays silent."
+msgstr "Her üye her yeni mesajı okur ve yanıt verir, bekler ya da sessiz kalır."
+
 #: src/pages/RoutineSchedule.tsx
 msgid "Every Monday"
 msgstr "Her pazartesi"
@@ -3049,10 +3057,6 @@ msgstr "Üye"
 #: src/pages/GroupPanel.tsx
 msgid "Members ({0})"
 msgstr ""
-
-#: src/pages/GroupPanel.tsx
-msgid "Members take turns"
-msgstr "Üyeler sırayla yanıt verir"
 
 #: src/pages/KnowledgeSection.tsx
 #: src/pages/MemorySettingsOverlay.tsx

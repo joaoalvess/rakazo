@@ -56,19 +56,7 @@ export function resolveGroupTargetBotIds(input: {
   return [...targetIds];
 }
 
-/** True when a person's group message names no member and no `@everyone`, by text or chip. */
-export function isUnaddressedGroupMessage(input: {
-  text: string;
-  members: GroupMemberRef[];
-  explicitMentions?: string[];
-}): boolean {
-  const memberIds = new Set(input.members.map((member) => member.id));
-  if ((input.explicitMentions ?? []).some((mentionId) => memberIds.has(mentionId))) return false;
-  if (hasMentionToken(input.text, "everyone")) return false;
-  return !input.members.some((member) => hasMentionToken(input.text, member.name));
-}
-
-/** Members a bot's message @mentions, never the bot itself. A bot's `@everyone` wakes nobody. */
+/** Members a bot's message @mentions, never the bot itself. A bot's `@everyone` names nobody. */
 export function mentionedMemberIds(
   text: string,
   members: GroupMemberRef[],

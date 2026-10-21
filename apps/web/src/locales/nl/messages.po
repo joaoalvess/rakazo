@@ -1420,6 +1420,10 @@ msgstr "Doorgaan met {0}"
 msgid "Continue with email"
 msgstr "Doorgaan met e-mail"
 
+#: src/pages/GroupPanel.tsx
+msgid "Conversation mode"
+msgstr "Gespreksmodus"
+
 #: src/components/ComputersUnavailableHint.tsx
 #: src/pages/ModelSettingsOverlay.tsx
 #: src/pages/Onboarding.tsx
@@ -2353,6 +2357,10 @@ msgstr "Elke dag"
 msgid "Every hour"
 msgstr "Elk uur"
 
+#: src/pages/GroupPanel.tsx
+msgid "Every member reads each new message and replies, waits or stays silent."
+msgstr "Elk lid leest elk nieuw bericht en antwoordt, wacht of blijft stil."
+
 #: src/pages/RoutineSchedule.tsx
 msgid "Every Monday"
 msgstr "Elke maandag"
@@ -3049,10 +3057,6 @@ msgstr "Lid"
 #: src/pages/GroupPanel.tsx
 msgid "Members ({0})"
 msgstr "Leden ({0})"
-
-#: src/pages/GroupPanel.tsx
-msgid "Members take turns"
-msgstr "Leden reageren om de beurt"
 
 #: src/pages/KnowledgeSection.tsx
 #: src/pages/MemorySettingsOverlay.tsx

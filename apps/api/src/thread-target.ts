@@ -15,8 +15,8 @@ import {
   ACTIVE_RUN_STATUSES,
   BACKGROUND_RUN_TRIGGERS,
   callIdFromClientNonce,
+  hasMentionToken,
   isConversationalRun,
-  isUnaddressedGroupMessage,
   messageReaction,
   projectMessages,
   QUEUE_HOLDING_RUN_STATUSES,
@@ -32,10 +32,8 @@ import {
   createRepos,
   createThreadMessageInTransaction,
   expireComputerExecutionLeases,
-  groupChainRunNonce,
   IsolationError,
   lockOwnedGroup,
-  queueGroupConversationTurn,
   retireWaitingQuestionInTransaction,
   touchGroupUpdatedAt,
 } from "@rakazo/db";
@@ -229,24 +227,14 @@ function sendResult(message: { seq: number }, runs: Array<{ id: string; taskId: 
 
 export async function cancelSupersededQueuedRuns(
   tx: Prisma.TransactionClient,
-  input: {
-    threadId: string;
-    botIds: string[];
-    keepRunIds: string[];
-    /** Conversation groups also drop turns a bot's mention or handoff queued. */
-    botFollowUps?: boolean;
-  },
+  input: { threadId: string; botIds: string[]; keepRunIds: string[] },
 ) {
   const superseded = await tx.run.findMany({
     where: {
       threadId: input.threadId,
       botId: { in: input.botIds },
       status: "queued",
-      OR: [
-        { trigger: "user", sourceMessage: { role: "user" } },
-        { trigger: "reaction" },
-        ...(input.botFollowUps ? [{ trigger: "follow_up", sourceMessage: { role: "bot" } }] : []),
-      ],
+      OR: [{ trigger: "user", sourceMessage: { role: "user" } }, { trigger: "reaction" }],
       id: { notIn: input.keepRunIds },
     },
     select: { id: true, taskId: true },
@@ -868,21 +856,15 @@ export async function sendThreadMessage(
 
       const { conversationMode, members } = await lockAndLoadGroupMembers(tx, actor, target);
       const memberBotIds = members.map((member) => member.botId);
-      const memberRefs = members.map((member) => ({ id: member.botId, name: member.name }));
       const mentionTargets = splitMentionTargets(input.mentions);
-      const targetBotIds = resolveGroupTargetBotIds({
-        text: input.text ?? "",
-        members: memberRefs,
-        explicitMentions: mentionTargets.botMentionIds,
-      });
-      // Decided here, where typed chips are known; the turn nonces carry it afterwards.
-      const conversationRound =
-        conversationMode &&
-        isUnaddressedGroupMessage({
-          text: input.text ?? "",
-          members: memberRefs,
-          explicitMentions: mentionTargets.botMentionIds,
-        });
+      // A conversation group wakes every member; each decides whether to reply.
+      const targetBotIds = conversationMode
+        ? memberBotIds
+        : resolveGroupTargetBotIds({
+            text: input.text ?? "",
+            members: members.map((member) => ({ id: member.botId, name: member.name })),
+            explicitMentions: mentionTargets.botMentionIds,
+          });
       const { blocks: attachmentBlocks, artifacts } = await resolveGroupSendAttachments(
         { prisma: tx },
         actor,
@@ -914,6 +896,15 @@ export async function sendThreadMessage(
       });
       const activeByBotId = new Map<string, (typeof activeRuns)[number]>();
       const answeredByBotId = new Map<string, Array<(typeof activeRuns)[number]>>();
+      // In a conversation group a message answers the latest question or retires the questions of
+      // members it names; the other members' questions stay pending.
+      const pausedBotIds = new Set<string>();
+      const namesMember = (botId: string) =>
+        mentionTargets.botMentionIds.includes(botId) ||
+        hasMentionToken(input.text ?? "", "everyone") ||
+        members.some(
+          (member) => member.botId === botId && hasMentionToken(input.text ?? "", member.name),
+        );
       for (const run of activeRuns) {
         if (run.status === "waiting_input") {
           const answered = await answerWaitingRunWithTextInTransaction(tx, {
@@ -928,6 +919,8 @@ export async function sendThreadMessage(
             const queuedForBot = answeredByBotId.get(run.botId) ?? [];
             queuedForBot.push({ ...run, status: "queued" });
             answeredByBotId.set(run.botId, queuedForBot);
+          } else if (conversationMode && !namesMember(run.botId)) {
+            pausedBotIds.add(run.botId);
           } else {
             await retireWaitingQuestionInTransaction(tx, {
               spaceId: actor.spaceId,
@@ -952,6 +945,7 @@ export async function sendThreadMessage(
           runs.push(...answered);
           continue;
         }
+        if (pausedBotIds.has(botId)) continue;
         const active = activeByBotId.get(botId);
         if (active) {
           await tx.steeringMessage.create({
@@ -984,26 +978,12 @@ export async function sendThreadMessage(
             userId: actor.userId,
             status: "queued",
             trigger: "user",
-            clientNonce: conversationRound
-              ? groupChainRunNonce(message.id, botId)
-              : sendRunClientNonce(input.clientNonce, message.id, botId),
+            clientNonce: sendRunClientNonce(input.clientNonce, message.id, botId),
             sourceMessageId: message.id,
+            groupChainMessageId: conversationMode ? message.id : undefined,
           },
         });
         runs.push(run);
-      }
-      // A busy first member took the message as steering; the round starts with the next one.
-      if (conversationRound && answeredByBotId.size === 0 && activeByBotId.size > 0) {
-        runs.push(
-          ...(await queueGroupConversationTurn(tx, {
-            spaceId: actor.spaceId,
-            threadId: target.threadId,
-            userId: actor.userId,
-            members: memberRefs,
-            source: message,
-            prompt: buildSendPrompt(input.text, artifacts, connectorNames),
-          })),
-        );
       }
       const firstRun = runs[0];
       const eventBotId = firstRun?.botId ?? targetBotIds[0];
@@ -1018,7 +998,6 @@ export async function sendThreadMessage(
             threadId: target.threadId,
             botIds: createdRuns.map((run) => run.botId),
             keepRunIds: createdRuns.map((run) => run.id),
-            botFollowUps: conversationMode,
           });
         }
       }

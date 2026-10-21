@@ -21,6 +21,30 @@ export function botMessageMaxHops(): number {
   return Number.isInteger(raw) && raw >= 1 ? raw : DEFAULT_BOT_MESSAGE_MAX_HOPS;
 }
 
+/** Bot messages one conversation-group chain may carry before members stop waking each other. */
+export const DEFAULT_GROUP_CONVERSATION_MAX_CHAIN_MESSAGES = 40;
+/** Bot messages a conversation group may carry in any rolling hour before the same pause. */
+export const DEFAULT_GROUP_CONVERSATION_MAX_MESSAGES_PER_HOUR = 60;
+
+function positiveInteger(value: string | undefined, fallback: number): number {
+  const raw = Number(value?.trim() || fallback);
+  return Number.isInteger(raw) && raw >= 1 ? raw : fallback;
+}
+
+export function groupConversationMaxChainMessages(): number {
+  return positiveInteger(
+    process.env.GROUP_CONVERSATION_MAX_CHAIN_MESSAGES,
+    DEFAULT_GROUP_CONVERSATION_MAX_CHAIN_MESSAGES,
+  );
+}
+
+export function groupConversationMaxMessagesPerHour(): number {
+  return positiveInteger(
+    process.env.GROUP_CONVERSATION_MAX_MESSAGES_PER_HOUR,
+    DEFAULT_GROUP_CONVERSATION_MAX_MESSAGES_PER_HOUR,
+  );
+}
+
 /** Cap total description characters across the rendered teammate directory. */
 export const BOT_DIRECTORY_DESCRIPTIONS_MAX_LENGTH = 8_000;
 
@@ -138,7 +162,7 @@ export function renderGroupMembersContext(
     "Post in this shared thread. When another teammate is genuinely needed for a distinct next stage, use handoff_to_bot instead of telling the user to switch chats.",
     `A handoff transfers ownership. Complete a stage handed to you yourself, then post its result here. Do not hand it back merely to report or ask the previous bot to do the same work. ${
       options.conversationMode
-        ? "This group is a conversation: members reply in turn and read each other's messages. Mention @Name in your reply to bring a colleague in, reply directly when a colleague asks you something, and keep handoff_to_bot for transferring a whole stage."
+        ? "This group is a conversation: every member reads each new message and decides for itself whether to reply, so colleagues may be answering at the same time. Mention a colleague as @Exact Name to bring them in, and use handoff_to_bot only to transfer a whole stage."
         : "Never bounce a stage between members. One bot owns each stage."
     }`,
   ].join("\n");

@@ -139,6 +139,7 @@ export class ScriptedAgentRuntime implements AgentRuntime {
 export function inferScript(
   prompt: string,
   resumeFromCheckpoint?: string,
+  botName?: string,
 ): NonNullable<AgentRunRequest["script"]> {
   const lower = prompt.toLowerCase();
   if (lower.includes("silent routine fixture")) {
@@ -150,12 +151,8 @@ export function inferScript(
       { assistant: "NO_RESPONSE", complete: true },
     ];
   }
-  if (lower.includes("ping-pong fixture")) {
-    const peer =
-      /^\[(.+?) mentioned you\]/.exec(prompt)?.[1] ??
-      /ping-pong fixture with\s+([A-Za-z0-9_-]+)/i.exec(prompt)?.[1] ??
-      "Peer";
-    return [{ assistant: `@${peer} ping-pong fixture`, complete: true }];
+  if (botName && lower.includes("conversation fixture")) {
+    return [{ assistant: conversationFixtureReply(prompt, botName), complete: true }];
   }
   if (resumeFromCheckpoint === "takeover-skipped") {
     return [
@@ -623,6 +620,26 @@ code-b
       complete: true,
     },
   ];
+}
+
+/**
+ * One round per group message: `conversation fixture Ari:speak Bo:wait / Bo:speak@Ari` makes Ari
+ * reply with the later rounds, Bo wait, and everyone else pass. `loop` repeats the round.
+ */
+function conversationFixtureReply(prompt: string, botName: string): string {
+  const rounds = /conversation fixture\s*([\s\S]*)$/i.exec(prompt)?.[1]?.trim() ?? "";
+  const loop = /^loop\s/i.test(rounds);
+  const [round = "", ...later] = rounds.replace(/^loop\s+/i, "").split("/");
+  const directive = round
+    .trim()
+    .split(/\s+/)
+    .find((entry) => entry.toLowerCase().startsWith(`${botName.toLowerCase()}:`));
+  const action = directive?.slice(botName.length + 1) ?? "pass";
+  if (action === "wait") return "WAIT";
+  if (!action.startsWith("speak")) return "NO_RESPONSE";
+  const mention = action.split("@")[1];
+  const next = loop ? rounds : later.join("/").trim();
+  return `${mention ? `@${mention} ` : ""}conversation fixture ${next}`.trim();
 }
 
 function shouldFail(prompt: string): boolean {

@@ -4,6 +4,7 @@ import { GROUP_MEMBER_MAX, GROUP_MEMBER_MIN } from "@rakazo/contracts";
 import { BotAvatar, Button, Checkbox, Input, Switch } from "@rakazo/ui-web";
 import { X } from "lucide-react";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { InfoTooltip } from "../components/InfoTooltip";
 import { errorText } from "../lib/user-error";
 import { DeleteItemDialog } from "./shell/dialogs";
 
@@ -326,20 +327,22 @@ export function GroupSettings({
           className="mt-2"
         />
       </label>
-      <label
-        htmlFor={conversationId}
-        className="mt-5 flex cursor-pointer items-center justify-between gap-3 text-sm text-muted-foreground"
-      >
-        <span>
-          <Trans>Members take turns</Trans>
-        </span>
+      <div className="mt-5 flex items-center justify-between gap-3 text-sm text-muted-foreground">
+        <div className="flex items-center gap-1">
+          <label htmlFor={conversationId}>
+            <Trans>Conversation mode</Trans>
+          </label>
+          <InfoTooltip label={t`Conversation mode`}>
+            {t`Every member reads each new message and replies, waits or stays silent.`}
+          </InfoTooltip>
+        </div>
         <Switch
           id={conversationId}
           checked={conversationMode}
           disabled={saving}
           onCheckedChange={(checked) => setConversationMode(checked)}
         />
-      </label>
+      </div>
       <MemberPicker bots={bots} selected={selected} onChange={setSelected} onOpenBot={onOpenBot} />
       <Button
         className="mt-5 w-full"
