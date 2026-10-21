@@ -317,9 +317,10 @@ describe("group members roster", () => {
     });
     expect(conversation.split("\n").slice(0, -1)).toEqual(standard.split("\n").slice(0, -1));
     expect(conversation).not.toContain("Never bounce a stage between members.");
-    expect(conversation).toContain("Mention @Name in your reply to bring a colleague in");
-    expect(conversation).toContain("reply directly when a colleague asks you something");
-    expect(conversation).toContain("keep handoff_to_bot for transferring a whole stage");
+    expect(conversation).toContain("every member reads each new message");
+    expect(conversation).toContain("colleagues may be answering at the same time");
+    expect(conversation).toContain("Mention a colleague as @Exact Name");
+    expect(conversation).toContain("use handoff_to_bot only to transfer a whole stage");
   });
 
   it("treats group roster fields as untrusted prompt data", () => {

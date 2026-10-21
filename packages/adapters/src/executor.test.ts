@@ -8,6 +8,7 @@ import {
   createRunExecutor,
   createRunWorkspaceCheckpoint,
   dockerComputerToolInstruction,
+  GROUP_CONVERSATION_ADDRESSED_GUIDANCE,
   GROUP_CONVERSATION_SILENT_REPLY_GUIDANCE,
   isTerminalModelSetupError,
   loadCurrentTurnImages,
@@ -1505,26 +1506,31 @@ describe("userTurnInstructions", () => {
     expect(text).not.toContain("message_user");
   });
 
-  it("lets a conversation-group member answer with NO_RESPONSE", () => {
-    const text = userTurnInstructions({
-      ...base,
-      groupContext: `You are in the group Crew.\n\n${GROUP_CONVERSATION_SILENT_REPLY_GUIDANCE}`,
-      messagingContext: undefined,
-      redactedMemoryContext: undefined,
-      redactedScratchpadContext: undefined,
-      hasHistoricalContext: false,
-      agentEnvironmentInstruction: undefined,
-      botDirectory: undefined,
-      pluginLine: undefined,
-      agentSkillsLine: undefined,
-      taughtSkillsLine: undefined,
-    })
-      .filter(Boolean)
-      .join("\n");
-    expect(text).toContain(
-      "If you have nothing to add to what has already been said in this group, the entire final assistant reply must be exactly NO_RESPONSE",
-    );
-  });
+  it.each([
+    [GROUP_CONVERSATION_SILENT_REPLY_GUIDANCE, ["exactly WAIT", "exactly NO_RESPONSE"], []],
+    [GROUP_CONVERSATION_ADDRESSED_GUIDANCE, [], ["WAIT", "NO_RESPONSE"]],
+  ])(
+    "gives a conversation-group member its silent options only when it may stay silent",
+    (guidance, present, absent) => {
+      const text = userTurnInstructions({
+        ...base,
+        groupContext: `You are in the group Crew.\n\n${guidance}`,
+        messagingContext: undefined,
+        redactedMemoryContext: undefined,
+        redactedScratchpadContext: undefined,
+        hasHistoricalContext: false,
+        agentEnvironmentInstruction: undefined,
+        botDirectory: undefined,
+        pluginLine: undefined,
+        agentSkillsLine: undefined,
+        taughtSkillsLine: undefined,
+      })
+        .filter(Boolean)
+        .join("\n");
+      for (const token of present) expect(text).toContain(token);
+      for (const token of absent) expect(text).not.toContain(token);
+    },
+  );
 
   it("keeps the credential safeguard when secret tools are off and shell stays on", () => {
     const instructions = userTurnInstructions({

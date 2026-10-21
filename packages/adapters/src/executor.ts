@@ -398,6 +398,8 @@ import {
   NO_RESPONSE,
   stripNoResponseReply,
   stripStrayNoResponse,
+  stripWaitReply,
+  WAIT,
 } from "./silent-reply.js";
 import {
   listAgentSkillRecords,
@@ -3997,7 +3999,6 @@ export function createRunExecutor(deps: ExecutorDeps) {
               .enqueue(runContinueJob(failed.continuationRunId))
               .catch((error) => getLogger().error("steering continuation enqueue", error));
           }
-          await enqueueGroupConversationRuns(deps, failed.nextRunIds);
           if (run.trigger === "bot_message") {
             await returnBotMessageOutcome(
               deps,
@@ -4178,8 +4179,12 @@ export function createRunExecutor(deps: ExecutorDeps) {
               name: bot.name,
             })
           : undefined;
-        const groupSilenceAllowed =
+        // A member woken by a message in a conversation group decides whether to reply.
+        const groupWake =
           groupRoster?.conversationMode === true &&
+          (run.trigger === "user" || run.trigger === "follow_up");
+        const groupSilenceAllowed =
+          groupWake &&
           groupConversationAllowsSilence(
             historyMessages.find((message) => message.id === run.sourceMessageId),
             bot,
@@ -4192,7 +4197,11 @@ export function createRunExecutor(deps: ExecutorDeps) {
         const groupContext = groupRoster
           ? [
               groupRoster.context,
-              groupSilenceAllowed ? GROUP_CONVERSATION_SILENT_REPLY_GUIDANCE : undefined,
+              groupWake
+                ? groupSilenceAllowed
+                  ? GROUP_CONVERSATION_SILENT_REPLY_GUIDANCE
+                  : GROUP_CONVERSATION_ADDRESSED_GUIDANCE
+                : undefined,
             ]
               .filter(Boolean)
               .join("\n\n")
@@ -4535,12 +4544,13 @@ export function createRunExecutor(deps: ExecutorDeps) {
         const scripted = deps.runtime.describe().capabilities.scripted;
         const script = scripted ? inferScript(task.prompt, takeoverResume?.checkpoint) : undefined;
         const flushProgress = async () => {
-          // Routines may finish silently. Do not leak narration or a partial silence
-          // sentinel before the final outcome is known.
+          // Routines and conversation-group members may finish silently. Do not leak
+          // narration or a partial silence sentinel before the final outcome is known.
           if (
             scripted ||
             !pendingProgress ||
             run.trigger === "routine" ||
+            groupSilenceAllowed ||
             isBackgroundRunTrigger(run.trigger)
           )
             return;
@@ -8163,11 +8173,17 @@ export function createRunExecutor(deps: ExecutorDeps) {
             currentTextSegment = assembled;
           }
           flushPendingTools();
-          // Silent-allowed runs can choose an explicit NO_RESPONSE or finish empty.
-          // Other runs still drop a stray sentinel at the edges of a real reply.
-          const silentReply = allowSilentEmptyRun
-            ? stripNoResponseReply(assembled, messageSegments)
-            : stripStrayNoResponse(assembled, messageSegments);
+          // Silent-allowed runs can choose an explicit NO_RESPONSE or finish empty, and a
+          // conversation-group member can also WAIT. Other runs still drop a stray sentinel
+          // at the edges of a real reply.
+          const waitReply = groupSilenceAllowed
+            ? stripWaitReply(assembled, messageSegments)
+            : undefined;
+          const silentReply =
+            waitReply ??
+            (allowSilentEmptyRun
+              ? stripNoResponseReply(assembled, messageSegments)
+              : stripStrayNoResponse(assembled, messageSegments));
           let completionBlocks = silentReply.blocks;
           if (!silentReply.assembled || isBackgroundRunTrigger(run.trigger)) {
             // Mid-turn progress already posted durable chat messages; skip the empty
@@ -8225,6 +8241,12 @@ export function createRunExecutor(deps: ExecutorDeps) {
               text,
               peerMessage?.repliesToRequest === true,
             ),
+            conversationDecision:
+              groupWake && !handedOff && !blocks.some((block) => block.kind === "text")
+                ? waitReply
+                  ? "wait"
+                  : "pass"
+                : undefined,
           });
           if (!completed) return;
           stopHeartbeatAfterCompletion();
@@ -8322,7 +8344,6 @@ export function createRunExecutor(deps: ExecutorDeps) {
               .enqueue(runContinueJob(failed.continuationRunId))
               .catch((error) => getLogger().error("steering continuation enqueue", error));
           }
-          await enqueueGroupConversationRuns(deps, failed.nextRunIds);
           if (run.trigger === "bot_message") {
             await returnBotMessageOutcome(
               deps,
@@ -9208,7 +9229,10 @@ export const ROUTINE_SILENT_REPLY_GUIDANCE = `If this routine's prompt says to s
 
 export const REACTION_SILENT_REPLY_GUIDANCE = `The user reacted with an emoji to your message. Reply only if the reaction calls for it, such as a correction after 👎, a go-ahead on something you proposed, or a question. Otherwise the entire final assistant reply must be exactly ${NO_RESPONSE}, with no message_user call.`;
 
-export const GROUP_CONVERSATION_SILENT_REPLY_GUIDANCE = `If you have nothing to add to what has already been said in this group, the entire final assistant reply must be exactly ${NO_RESPONSE}, with no surrounding prose.`;
+export const GROUP_CONVERSATION_SILENT_REPLY_GUIDANCE = `Decide before you write. Reply only with something new from your role: a fact nobody has brought, a correction with evidence, work you take on, or an answer to a question put to you. If what you would say depends on what a colleague is about to post, the entire final assistant reply must be exactly ${WAIT}; you will read the next message. If you have nothing to add, or would only agree, repeat or summarize, the entire final assistant reply must be exactly ${NO_RESPONSE}; you will not be woken again in this conversation unless someone mentions you. Neither token posts anything, so add no surrounding prose and no message_user call.`;
+
+export const GROUP_CONVERSATION_ADDRESSED_GUIDANCE =
+  "You were addressed directly, so reply in this thread.";
 
 export function runAllowsSilentEmpty(trigger: string): boolean {
   return trigger === "reaction" || trigger === "routine" || isBackgroundRunTrigger(trigger);

@@ -22,6 +22,7 @@ import {
   subagentMarksUnread,
   TICKET_SILENT_REPLY_GUIDANCE,
 } from "./executor.js";
+import { stripWaitReply, WAIT } from "./silent-reply.js";
 import { finalBlocksAfterMidTurnProgress } from "./user-progress.js";
 
 describe("completionMessageSegments", () => {
@@ -465,6 +466,29 @@ describe("stripNoResponseReply", () => {
     );
     expect(blocks).toEqual([]);
     expect(completionMarksUnread("routine", completionNotificationBody("", blocks))).toBe(false);
+  });
+});
+
+describe("stripWaitReply", () => {
+  it("treats an exact WAIT final, trimmed or repeated, as empty", () => {
+    for (const text of [WAIT, `  ${WAIT}\n`, `${WAIT}${WAIT}`]) {
+      expect(
+        stripWaitReply(text, [
+          { kind: "meta", text: "Read the thread" },
+          { kind: "text", text },
+        ]),
+      ).toEqual({ assembled: "", blocks: [{ kind: "meta", text: "Read the thread" }] });
+    }
+  });
+
+  it("keeps any reply with prose, and leaves NO_RESPONSE to its own stripper", () => {
+    for (const text of ["WAIT for Ada's numbers", "Let's wait.", NO_RESPONSE, ""]) {
+      expect(stripWaitReply(text, [{ kind: "text", text }])).toBeUndefined();
+    }
+  });
+
+  it("fails closed when a text block disagrees with the assembled final", () => {
+    expect(stripWaitReply(WAIT, [{ kind: "text", text: "Here is the plan." }])).toBeUndefined();
   });
 });
 
