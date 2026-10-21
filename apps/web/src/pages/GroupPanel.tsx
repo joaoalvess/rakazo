@@ -1,7 +1,7 @@
 import { Trans, useLingui } from "@lingui/react/macro";
 import type { Bot, Group } from "@rakazo/contracts";
 import { GROUP_MEMBER_MAX, GROUP_MEMBER_MIN } from "@rakazo/contracts";
-import { BotAvatar, Button, Checkbox, Input } from "@rakazo/ui-web";
+import { BotAvatar, Button, Checkbox, Input, Switch } from "@rakazo/ui-web";
 import { X } from "lucide-react";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { errorText } from "../lib/user-error";
@@ -225,7 +225,11 @@ export function GroupSettings({
 }: {
   group: Group;
   bots: Bot[];
-  onSave: (input: { name?: string; botIds?: string[] }) => Promise<void>;
+  onSave: (input: {
+    name?: string;
+    botIds?: string[];
+    conversationMode?: boolean;
+  }) => Promise<void>;
   onRemove: () => Promise<void>;
   onClose: () => void;
   onOpenBot?: (botId: string) => void;
@@ -234,8 +238,10 @@ export function GroupSettings({
 }) {
   const { t } = useLingui();
   const nameId = useId();
+  const conversationId = useId();
   const [name, setName] = useState(group.name);
   const [selected, setSelected] = useState(group.members.map((member) => member.botId));
+  const [conversationMode, setConversationMode] = useState(group.conversationMode ?? false);
   const [saving, setSaving] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -276,6 +282,8 @@ export function GroupSettings({
         )
           ? undefined
           : selected,
+        conversationMode:
+          conversationMode !== (group.conversationMode ?? false) ? conversationMode : undefined,
       });
     } catch (cause) {
       setError(errorText(cause, t`Could not save group`));
@@ -316,6 +324,20 @@ export function GroupSettings({
           value={name}
           onChange={(e) => setName(e.target.value)}
           className="mt-2"
+        />
+      </label>
+      <label
+        htmlFor={conversationId}
+        className="mt-5 flex cursor-pointer items-center justify-between gap-3 text-sm text-muted-foreground"
+      >
+        <span>
+          <Trans>Members take turns</Trans>
+        </span>
+        <Switch
+          id={conversationId}
+          checked={conversationMode}
+          disabled={saving}
+          onCheckedChange={(checked) => setConversationMode(checked)}
         />
       </label>
       <MemberPicker bots={bots} selected={selected} onChange={setSelected} onOpenBot={onOpenBot} />

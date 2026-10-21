@@ -150,6 +150,13 @@ export function inferScript(
       { assistant: "NO_RESPONSE", complete: true },
     ];
   }
+  if (lower.includes("ping-pong fixture")) {
+    const peer =
+      /^\[(.+?) mentioned you\]/.exec(prompt)?.[1] ??
+      /ping-pong fixture with\s+([A-Za-z0-9_-]+)/i.exec(prompt)?.[1] ??
+      "Peer";
+    return [{ assistant: `@${peer} ping-pong fixture`, complete: true }];
+  }
   if (resumeFromCheckpoint === "takeover-skipped") {
     return [
       {

@@ -313,3 +313,14 @@ describe("inferScript save_shared_memory", () => {
     ]);
   });
 });
+
+describe("inferScript ping-pong", () => {
+  it("mentions the named peer first, then whoever mentioned it", () => {
+    expect(inferScript("@Ari start the ping-pong fixture with Bo")).toEqual([
+      { assistant: "@Bo ping-pong fixture", complete: true },
+    ]);
+    expect(inferScript("[Bo mentioned you]: @Ari ping-pong fixture")).toEqual([
+      { assistant: "@Bo ping-pong fixture", complete: true },
+    ]);
+  });
+});

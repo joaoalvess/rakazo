@@ -163,6 +163,8 @@ export const GroupSchema = z.object({
   spaceId: Id,
   name: z.string(),
   pinned: z.boolean(),
+  /** Unaddressed messages go to every member in turn, and members wake each other with @mentions. */
+  conversationMode: z.boolean().optional(),
   sectionId: Id.nullable(),
   archivedAt: z.string().nullable(),
   members: z.array(GroupMemberSchema),
@@ -193,6 +195,7 @@ export const UpdateGroupInput = z.object({
   /** Reject a membership replacement when another client changed the active roster. */
   expectedBotIds: z.array(Id).max(GROUP_MEMBER_MAX).optional(),
   pinned: z.boolean().optional(),
+  conversationMode: z.boolean().optional(),
   sectionId: Id.nullable().optional(),
 });
 export type UpdateGroupInput = z.infer<typeof UpdateGroupInput>;

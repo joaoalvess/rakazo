@@ -3050,6 +3050,10 @@ msgstr "Lid"
 msgid "Members ({0})"
 msgstr "Leden ({0})"
 
+#: src/pages/GroupPanel.tsx
+msgid "Members take turns"
+msgstr "Leden reageren om de beurt"
+
 #: src/pages/KnowledgeSection.tsx
 #: src/pages/MemorySettingsOverlay.tsx
 #: src/pages/SettingsOverlay.tsx

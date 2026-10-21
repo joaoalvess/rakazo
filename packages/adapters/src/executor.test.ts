@@ -8,6 +8,7 @@ import {
   createRunExecutor,
   createRunWorkspaceCheckpoint,
   dockerComputerToolInstruction,
+  GROUP_CONVERSATION_SILENT_REPLY_GUIDANCE,
   isTerminalModelSetupError,
   loadCurrentTurnImages,
   missingTurnImagesInstruction,
@@ -1502,6 +1503,27 @@ describe("userTurnInstructions", () => {
     expect(text).toContain("The user reacted with an emoji to your message.");
     expect(text).toContain("must be exactly NO_RESPONSE.");
     expect(text).not.toContain("message_user");
+  });
+
+  it("lets a conversation-group member answer with NO_RESPONSE", () => {
+    const text = userTurnInstructions({
+      ...base,
+      groupContext: `You are in the group Crew.\n\n${GROUP_CONVERSATION_SILENT_REPLY_GUIDANCE}`,
+      messagingContext: undefined,
+      redactedMemoryContext: undefined,
+      redactedScratchpadContext: undefined,
+      hasHistoricalContext: false,
+      agentEnvironmentInstruction: undefined,
+      botDirectory: undefined,
+      pluginLine: undefined,
+      agentSkillsLine: undefined,
+      taughtSkillsLine: undefined,
+    })
+      .filter(Boolean)
+      .join("\n");
+    expect(text).toContain(
+      "If you have nothing to add to what has already been said in this group, the entire final assistant reply must be exactly NO_RESPONSE",
+    );
   });
 
   it("keeps the credential safeguard when secret tools are off and shell stays on", () => {

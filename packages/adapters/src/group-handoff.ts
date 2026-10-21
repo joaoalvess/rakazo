@@ -1,9 +1,15 @@
 import { runContinueJob } from "@rakazo/adapter-kit";
 import { MessageBlock } from "@rakazo/contracts";
-import { botMessageHopExhausted, nextBotMessageHop, renderGroupMembersContext } from "@rakazo/core";
+import {
+  botMessageHopExhausted,
+  hasMentionToken,
+  nextBotMessageHop,
+  renderGroupMembersContext,
+} from "@rakazo/core";
 import {
   appendEventInTransaction,
   createThreadMessageInTransaction,
+  groupRunHop,
   IsolationError,
   lockOwnedGroup,
   type PrismaClient,
@@ -110,7 +116,10 @@ export async function handoffToGroupBot(
           "do not hand this stage back to its sender; post the result in the shared thread instead",
       } as const;
     }
-    const hop = nextBotMessageHop(sourceHandoff?.hop);
+    // Mentions in a conversation group spend the same hop budget as handoffs.
+    const hop = nextBotMessageHop(
+      sourceHandoff?.hop ?? (group.conversationMode ? await groupRunHop(tx, run.id) : undefined),
+    );
     if (botMessageHopExhausted(hop)) {
       return {
         error:
@@ -191,7 +200,7 @@ export async function loadGroupContext(
   prisma: PrismaClient,
   groupId: string,
   self: { id: string; name: string },
-): Promise<string | undefined> {
+): Promise<{ context: string; conversationMode: boolean } | undefined> {
   const group = await prisma.chatGroup.findUnique({
     where: { id: groupId },
     include: {
@@ -205,9 +214,29 @@ export async function loadGroupContext(
     },
   });
   if (!group) return undefined;
-  return renderGroupMembersContext(
-    group.name,
-    group.members.map((member) => member.bot),
-    self,
+  return {
+    context: renderGroupMembersContext(
+      group.name,
+      group.members.map((member) => member.bot),
+      self,
+      { conversationMode: group.conversationMode },
+    ),
+    conversationMode: group.conversationMode,
+  };
+}
+
+/**
+ * In a conversation group, a member may stay silent unless a person named it or a colleague
+ * handed it a stage. A colleague's mention allows silence, so a thank-you needs no reply.
+ */
+export function groupConversationAllowsSilence(
+  source: { role: string; blocks: readonly MessageBlock[] } | undefined,
+  self: { id: string; name: string },
+): boolean {
+  if (!source) return false;
+  return !source.blocks.some((block) =>
+    block.kind === "handoff"
+      ? block.toBotId === self.id
+      : source.role === "user" && block.kind === "text" && hasMentionToken(block.text, self.name),
   );
 }

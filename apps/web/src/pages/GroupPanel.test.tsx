@@ -16,9 +16,10 @@ vi.mock("@lingui/react/macro", () => {
 // The alert dialog's Cancel closes it through onOpenChange, as Base UI does.
 let dismissDialog: (() => void) | undefined;
 vi.mock("@rakazo/ui-web", async (importOriginal) => {
-  const { Checkbox } = await importOriginal<typeof UiWeb>();
+  const { Checkbox, Switch } = await importOriginal<typeof UiWeb>();
   return {
     Checkbox,
+    Switch,
     BotAvatar: () => <span />,
     Button: (props: ComponentProps<"button">) => <button {...props} />,
     Input: (props: ComponentProps<"input">) => <input {...props} />,
@@ -118,7 +119,8 @@ const bots = [
 
 async function render(
   options: {
-    onSave?: () => Promise<void>;
+    group?: Group;
+    onSave?: ComponentProps<typeof GroupSettings>["onSave"];
     onRemove?: () => Promise<void>;
     covered?: boolean;
     instance?: string;
@@ -132,7 +134,7 @@ async function render(
     root.render(
       <GroupSettings
         key={options.instance}
-        group={group}
+        group={options.group ?? group}
         bots={options.bots ?? bots}
         onSave={options.onSave ?? (async () => undefined)}
         onRemove={onRemove}
@@ -267,6 +269,43 @@ describe("GroupSettings", () => {
     await click("Cancel");
     expect(container.querySelector('[role="alertdialog"]')).toBeNull();
     expect(onRemove).not.toHaveBeenCalled();
+  });
+
+  const conversationSwitch = () => container.querySelector<HTMLElement>('[role="switch"]')!;
+
+  it("saves the turn-taking switch only when it changed", async () => {
+    const onSave = vi.fn(async () => undefined);
+    await render({ onSave });
+    expect(conversationSwitch().getAttribute("aria-checked")).toBe("false");
+    await click("Save");
+    expect(onSave).toHaveBeenLastCalledWith({
+      name: undefined,
+      botIds: undefined,
+      conversationMode: undefined,
+    });
+
+    await render({ onSave, instance: "again" });
+    await act(async () => conversationSwitch().click());
+    expect(conversationSwitch().getAttribute("aria-checked")).toBe("true");
+    await click("Save");
+    expect(onSave).toHaveBeenLastCalledWith({
+      name: undefined,
+      botIds: undefined,
+      conversationMode: true,
+    });
+  });
+
+  it("starts from the group's turn-taking setting and can turn it off", async () => {
+    const onSave = vi.fn(async () => undefined);
+    await render({ onSave, group: { ...group, conversationMode: true } });
+    expect(conversationSwitch().getAttribute("aria-checked")).toBe("true");
+    await act(async () => conversationSwitch().click());
+    await click("Save");
+    expect(onSave).toHaveBeenLastCalledWith({
+      name: undefined,
+      botIds: undefined,
+      conversationMode: false,
+    });
   });
 
   const rowNames = () =>

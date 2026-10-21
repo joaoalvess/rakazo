@@ -275,7 +275,11 @@ import {
   updateChildBot,
   updateFleetGroup,
 } from "./fleet-tools.js";
-import { handoffToGroupBot, loadGroupContext } from "./group-handoff.js";
+import {
+  groupConversationAllowsSilence,
+  handoffToGroupBot,
+  loadGroupContext,
+} from "./group-handoff.js";
 import {
   COMPACTION_BATCH_SIZE,
   formatCompactedSummary,
@@ -3888,8 +3892,6 @@ export function createRunExecutor(deps: ExecutorDeps) {
           peerMessage?.intent,
           peerMessage?.repliesToRequest,
         );
-        const allowSilentEmptyRun =
-          allowSilentPeerMessage || messagingChannelRun || runAllowsSilentEmpty(run.trigger);
         const emptyResponseText = peerMessage
           ? peerMessage.intent === "result" ||
             peerMessage.intent === "status" ||
@@ -3995,6 +3997,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
               .enqueue(runContinueJob(failed.continuationRunId))
               .catch((error) => getLogger().error("steering continuation enqueue", error));
           }
+          await enqueueGroupConversationRuns(deps, failed.nextRunIds);
           if (run.trigger === "bot_message") {
             await returnBotMessageOutcome(
               deps,
@@ -4169,11 +4172,30 @@ export function createRunExecutor(deps: ExecutorDeps) {
           resolved.acceptsImages,
         );
         const acceptsImages = deps.runtime.describe().capabilities.scripted || modelSeesImages;
-        const groupContext = thread.groupId
+        const groupRoster = thread.groupId
           ? await loadGroupContext(deps.prisma, thread.groupId, {
               id: bot.id,
               name: bot.name,
             })
+          : undefined;
+        const groupSilenceAllowed =
+          groupRoster?.conversationMode === true &&
+          groupConversationAllowsSilence(
+            historyMessages.find((message) => message.id === run.sourceMessageId),
+            bot,
+          );
+        const allowSilentEmptyRun =
+          allowSilentPeerMessage ||
+          messagingChannelRun ||
+          groupSilenceAllowed ||
+          runAllowsSilentEmpty(run.trigger);
+        const groupContext = groupRoster
+          ? [
+              groupRoster.context,
+              groupSilenceAllowed ? GROUP_CONVERSATION_SILENT_REPLY_GUIDANCE : undefined,
+            ]
+              .filter(Boolean)
+              .join("\n\n")
           : undefined;
         const hasMessagingIdentity = deps.messaging
           ? await deps.messaging.hasIdentity(bot.id)
@@ -7950,6 +7972,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
                     .enqueue(runContinueJob(stopped.continuationRunId))
                     .catch((error) => getLogger().error("steering continuation enqueue", error));
                 }
+                await enqueueGroupConversationRuns(deps, stopped.nextRunIds);
                 if (run.trigger === "bot_message") {
                   await returnBotMessageOutcome(
                     deps,
@@ -8211,6 +8234,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
               .enqueue(runContinueJob(completed.continuationRunId))
               .catch((error) => getLogger().error("steering continuation enqueue", error));
           }
+          await enqueueGroupConversationRuns(deps, completed.nextRunIds);
           if (botMessageOutcome) {
             // Prefer the final reply. If the turn only posted mid-turn progress, return that
             // text explicitly as status. Delivery uses a stable auto-outcome key; mark
@@ -8298,6 +8322,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
               .enqueue(runContinueJob(failed.continuationRunId))
               .catch((error) => getLogger().error("steering continuation enqueue", error));
           }
+          await enqueueGroupConversationRuns(deps, failed.nextRunIds);
           if (run.trigger === "bot_message") {
             await returnBotMessageOutcome(
               deps,
@@ -8553,6 +8578,20 @@ async function notifyRun(
       if (options.retryOnFailure) throw error;
       getLogger().error("run notification", error);
     });
+}
+
+/** The queued runs are durable; the job reconciler repairs a missed immediate wake. */
+async function enqueueGroupConversationRuns(
+  deps: Pick<ExecutorDeps, "jobs">,
+  runIds: readonly string[] = [],
+) {
+  await Promise.all(
+    runIds.map((runId) =>
+      deps.jobs
+        .enqueue(runContinueJob(runId))
+        .catch((error) => getLogger().error("group conversation enqueue", error)),
+    ),
+  );
 }
 
 async function renewRunLease(
@@ -9168,6 +9207,8 @@ export function longWorkProgressGuidance(maxLength = messageUserMaxLength()): st
 export const ROUTINE_SILENT_REPLY_GUIDANCE = `If this routine's prompt says to stay silent when there is nothing to report, the entire final assistant reply must be exactly ${NO_RESPONSE} — no surrounding prose, no variants, no progress updates, no all-clear, and no meta note that you are staying silent. Do not call message_user unless you have something to report.`;
 
 export const REACTION_SILENT_REPLY_GUIDANCE = `The user reacted with an emoji to your message. Reply only if the reaction calls for it, such as a correction after 👎, a go-ahead on something you proposed, or a question. Otherwise the entire final assistant reply must be exactly ${NO_RESPONSE}, with no message_user call.`;
+
+export const GROUP_CONVERSATION_SILENT_REPLY_GUIDANCE = `If you have nothing to add to what has already been said in this group, the entire final assistant reply must be exactly ${NO_RESPONSE}, with no surrounding prose.`;
 
 export function runAllowsSilentEmpty(trigger: string): boolean {
   return trigger === "reaction" || trigger === "routine" || isBackgroundRunTrigger(trigger);

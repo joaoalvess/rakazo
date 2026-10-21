@@ -2577,6 +2577,113 @@ describeJourneys("required product journeys", () => {
     expect(remainingBotIds).not.toContain(artifactOwnerId);
   });
 
+  it("54b: conversation groups take turns, follow mentions to the hop cap, and allow silence", async () => {
+    const owner = await signup(app, `conversation-g-${stamp}@rakazo.test`, "Conversation Groups");
+    const bot = (name: string) =>
+      rpc<Bot>(app, owner, "bots/create", {
+        name,
+        title: "",
+        description: "",
+        instructions: "",
+        notifyOnFinish: true,
+      });
+    const [ari, bo, cy] = [await bot("Ari"), await bot("Bo"), await bot("Cy")];
+    const group = await rpc<{ id: string; threadId: string }>(app, owner, "groups/create", {
+      name: "Conversation crew",
+      botIds: [ari.id, bo.id, cy.id],
+    });
+    await expect(
+      rpc(app, owner, "groups/update", { groupId: group.id, conversationMode: true }),
+    ).resolves.toMatchObject({ conversationMode: true });
+    const threadId = group.threadId;
+    const sendAndSettle = async (text: string) => {
+      const { runId } = await rpc<{ runId: string }>(app, owner, "threads/send", {
+        groupId: group.id,
+        text,
+      });
+      const { sourceMessage } = await prisma.run.findUniqueOrThrow({
+        where: { id: runId },
+        select: { sourceMessage: { select: { id: true, seq: true, createdAt: true } } },
+      });
+      await waitForDatabase(
+        async () =>
+          (await prisma.run.count({
+            where: { threadId, status: { in: [...ACTIVE_RUN_STATUSES] } },
+          })) === 0,
+      );
+      return sourceMessage!;
+    };
+    const repliesAfter = async (seq: number) =>
+      prisma.message.findMany({
+        where: { threadId, role: "bot", seq: { gt: seq } },
+        orderBy: { seq: "asc" },
+      });
+
+    const question = await sendAndSettle("what should we build next?");
+    const turns = await prisma.run.findMany({
+      where: { threadId, sourceMessageId: question.id },
+      orderBy: { createdAt: "asc" },
+    });
+    expect(turns.map((run) => [run.botId, run.status])).toEqual([
+      [ari.id, "completed"],
+      [bo.id, "completed"],
+      [cy.id, "completed"],
+    ]);
+    expect((await repliesAfter(question.seq)).map((message) => message.botId)).toEqual([
+      ari.id,
+      bo.id,
+      cy.id,
+    ]);
+
+    const previousMaxHops = process.env.BOT_MESSAGE_MAX_HOPS;
+    process.env.BOT_MESSAGE_MAX_HOPS = "3";
+    try {
+      const ping = await sendAndSettle("@Ari start the ping-pong fixture with Bo");
+      expect((await repliesAfter(ping.seq)).map((message) => message.botId)).toEqual([
+        ari.id,
+        bo.id,
+        ari.id,
+        bo.id,
+      ]);
+      expect(
+        await prisma.run.count({
+          where: {
+            threadId,
+            clientNonce: { startsWith: "group-mention:" },
+            createdAt: { gte: ping.createdAt },
+          },
+        }),
+      ).toBe(3);
+      expect(
+        await prisma.run.count({
+          where: { threadId, botId: cy.id, createdAt: { gte: ping.createdAt } },
+        }),
+      ).toBe(0);
+    } finally {
+      if (previousMaxHops === undefined) delete process.env.BOT_MESSAGE_MAX_HOPS;
+      else process.env.BOT_MESSAGE_MAX_HOPS = previousMaxHops;
+    }
+
+    const quiet = await sendAndSettle("silent routine fixture");
+    expect(
+      (
+        await prisma.run.findMany({
+          where: { threadId, sourceMessageId: quiet.id },
+          orderBy: { createdAt: "asc" },
+        })
+      ).map((run) => [run.botId, run.status]),
+    ).toEqual([
+      [ari.id, "completed"],
+      [bo.id, "completed"],
+      [cy.id, "completed"],
+    ]);
+    expect(
+      (await repliesAfter(quiet.seq)).flatMap((message) =>
+        (message.blocks as MessageBlock[]).filter((block) => block.kind !== "steps"),
+      ),
+    ).toEqual([]);
+  });
+
   it("17: teach a task end to end", async () => {
     const cookie = await signup(app, `teach-j-${stamp}@rakazo.test`, "Teach Ada");
     const bot = await rpc<Bot>(app, cookie, "bots/create", {

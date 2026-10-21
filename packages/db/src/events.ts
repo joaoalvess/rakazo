@@ -28,6 +28,7 @@ import { getLogger } from "@rakazo/logging";
 import { cancelRunsInTransaction } from "./cancel-runs.js";
 import type { Prisma, PrismaClient } from "./client.js";
 import { expireComputerExecutionLeases } from "./computers.js";
+import { advanceGroupConversation, lockThreadForRunEnd } from "./group-conversation.js";
 import {
   assertRunCanWriteHistory,
   assertRunIsCancelled,
@@ -114,6 +115,8 @@ export interface ClaimedSteeringMessage {
 
 export interface FinalizeRunResult {
   continuationRunId: string | null;
+  /** Conversation-group turns this finish queued, when there are any. */
+  nextRunIds?: string[];
 }
 
 interface FinalizeRunBase {
@@ -1485,7 +1488,10 @@ export async function finalizeRun(
   if (!committed) return false;
   void captureRunAnalytics(prisma, analytics, input.runId, `run.${input.outcome}`);
   await notifyRealtime(realtime, committed.threadId, committed.seq);
-  return { continuationRunId: committed.continuationRunId };
+  return {
+    continuationRunId: committed.continuationRunId,
+    ...(committed.nextRunIds.length > 0 ? { nextRunIds: committed.nextRunIds } : {}),
+  };
 }
 
 /** Stamps one turn-level wall-clock duration on the final tool block. */
@@ -1509,9 +1515,14 @@ export function completedRunBlocks(
 async function finalizeRunOnce(
   prisma: PrismaClient,
   input: FinalizeRunInput,
-): Promise<{ threadId: string; seq: number; continuationRunId: string | null } | null> {
+): Promise<{
+  threadId: string;
+  seq: number;
+  continuationRunId: string | null;
+  nextRunIds: string[];
+} | null> {
   return prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-    await tx.$queryRaw`SELECT id FROM threads WHERE id = ${input.threadId} FOR UPDATE`;
+    const conversationGroupId = await lockThreadForRunEnd(tx, input.threadId);
     let writableRun: { startedAt: Date | null } | undefined;
     try {
       writableRun = await assertRunCanWriteHistory(tx, input.runId);
@@ -1567,6 +1578,7 @@ async function finalizeRunOnce(
     });
     if (task.count !== 1) throw new Error("Run task was not available to finalize");
 
+    let postedMessage: { id: string; blocks: MessageBlock[] } | undefined;
     if (input.outcome === "completed") {
       const completedBlocks = completedRunBlocks(input.blocks, writableRun?.startedAt ?? null, now);
       if (completedBlocks.length > 0) {
@@ -1578,6 +1590,7 @@ async function finalizeRunOnce(
           runId: input.runId,
           markUnread: input.markUnread,
         });
+        postedMessage = { id: message.id, blocks: completedBlocks };
         await appendEventInTransaction(tx, {
           spaceId: input.spaceId,
           threadId: input.threadId,
@@ -1622,8 +1635,11 @@ async function finalizeRunOnce(
       });
     }
     const continuationRunId = await createPendingSteeringRun(tx, input);
+    const nextRunIds = conversationGroupId
+      ? await advanceGroupConversation(tx, conversationGroupId, input.runId, postedMessage)
+      : [];
     await tx.bot.update({ where: { id: input.botId }, data: { updatedAt: now } });
-    return { threadId: lastEvent.threadId, seq: lastEvent.seq, continuationRunId };
+    return { threadId: lastEvent.threadId, seq: lastEvent.seq, continuationRunId, nextRunIds };
   });
 }
 

@@ -3050,6 +3050,10 @@ msgstr "Üye"
 msgid "Members ({0})"
 msgstr ""
 
+#: src/pages/GroupPanel.tsx
+msgid "Members take turns"
+msgstr "Üyeler sırayla yanıt verir"
+
 #: src/pages/KnowledgeSection.tsx
 #: src/pages/MemorySettingsOverlay.tsx
 #: src/pages/SettingsOverlay.tsx

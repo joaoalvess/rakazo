@@ -78,6 +78,30 @@ describe("queued run supersession", () => {
       data: { status: "cancelled" },
     });
   });
+
+  it("also cancels queued turns a bot's message woke in a conversation group", async () => {
+    const tx = {
+      run: { findMany: vi.fn().mockResolvedValue([]), updateMany: vi.fn() },
+      task: { updateMany: vi.fn() },
+    };
+    await cancelSupersededQueuedRuns(tx as never, {
+      threadId: "thread-1",
+      botIds: ["bot-1"],
+      keepRunIds: ["run-new"],
+      botFollowUps: true,
+    });
+    expect(tx.run.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          OR: [
+            { trigger: "user", sourceMessage: { role: "user" } },
+            { trigger: "reaction" },
+            { trigger: "follow_up", sourceMessage: { role: "bot" } },
+          ],
+        }),
+      }),
+    );
+  });
 });
 
 describe("reaction messages", () => {
@@ -3639,6 +3663,135 @@ describe("sendThreadMessage", () => {
         payload: expect.objectContaining({ replyQuote: "just this span" }),
       }),
     });
+  });
+});
+
+describe("conversation group sends", () => {
+  function sendToGroup(options: { conversationMode: boolean; text: string; busy?: boolean }) {
+    let messageSeq = 0;
+    let eventSeq = 0;
+    const busyRun = {
+      id: "run-busy",
+      taskId: "task-busy",
+      botId: "bot-a",
+      status: "running",
+      trigger: "user",
+      sourceMessage: { seq: 0 },
+    };
+    const tx = {
+      thread: {
+        update: vi.fn(async ({ data }: { data: { nextMessageSeq?: unknown } }) =>
+          data.nextMessageSeq ? { nextMessageSeq: ++messageSeq } : { nextEventSeq: ++eventSeq },
+        ),
+      },
+      message: {
+        findFirst: vi.fn().mockResolvedValue(null),
+        findMany: vi.fn().mockResolvedValue([]),
+        update: vi.fn(),
+        create: vi.fn().mockResolvedValue({
+          id: "msg-1",
+          threadId: "thread-1",
+          seq: 1,
+          role: "user",
+          blocks: [{ kind: "text", text: options.text }],
+          botId: null,
+          replyToMessageId: null,
+          replyQuote: null,
+          runId: null,
+          createdAt: new Date(),
+        }),
+      },
+      run: {
+        findMany: vi.fn(async ({ where }: { where: { status?: unknown } }) =>
+          options.busy && typeof where.status === "object" ? [busyRun] : [],
+        ),
+        findUnique: vi.fn().mockResolvedValue({ status: "queued", startedAt: null }),
+        create: vi.fn(async ({ data }: { data: { botId: string } }) => ({
+          id: `run-${data.botId}`,
+          taskId: "task-1",
+          botId: data.botId,
+          status: "queued",
+        })),
+      },
+      task: { create: vi.fn().mockResolvedValue({ id: "task-1" }) },
+      event: {
+        create: vi.fn().mockResolvedValue({ id: "event-1", seq: 1, createdAt: new Date() }),
+      },
+      steeringMessage: {
+        create: vi.fn(),
+        findMany: vi.fn().mockResolvedValue(options.busy ? [{ botId: "bot-a" }] : []),
+      },
+      chatGroup: {
+        findFirst: vi.fn().mockResolvedValue({
+          id: "group-1",
+          conversationMode: options.conversationMode,
+          members: [
+            { bot: { id: "bot-a", name: "Alpha", color: null } },
+            { bot: { id: "bot-b", name: "Beta", color: null } },
+          ],
+        }),
+        update: vi.fn().mockResolvedValue({ id: "group-1" }),
+      },
+      $queryRaw: vi.fn().mockResolvedValue([{ id: "group-1" }]),
+    };
+    const prisma = {
+      message: { findUnique: vi.fn().mockResolvedValue(null) },
+      $transaction: vi.fn(async (callback: (client: typeof tx) => unknown) => callback(tx)),
+    } as unknown as PrismaClient;
+    const target = {
+      kind: "group",
+      groupId: "group-1",
+      groupName: "Group",
+      threadId: "thread-1",
+      members: [],
+      memberBotIds: ["bot-a", "bot-b"],
+    } satisfies ThreadTarget;
+    const result = sendThreadMessage(
+      {
+        prisma,
+        events: { notify: vi.fn().mockResolvedValue(undefined) } as never,
+        jobs: { enqueue: vi.fn().mockResolvedValue(undefined) } as never,
+      },
+      { spaceId: "workspace-1", userId: "user-1" } as Actor,
+      target,
+      { text: options.text, clientNonce: "nonce-1" },
+    );
+    return { tx, result };
+  }
+
+  const createdNonces = (tx: ReturnType<typeof sendToGroup>["tx"]) =>
+    tx.run.create.mock.calls.map(([args]) => (args as { data: { clientNonce: string } }).data);
+
+  it("opens a round with the first member's turn on an unaddressed message", async () => {
+    const { tx, result } = sendToGroup({ conversationMode: true, text: "what next?" });
+
+    await expect(result).resolves.toMatchObject({ runId: "run-bot-a" });
+    expect(createdNonces(tx)).toEqual([
+      expect.objectContaining({ botId: "bot-a", clientNonce: "group-chain:msg-1:bot-a" }),
+    ]);
+  });
+
+  it.each([
+    ["names a member", { conversationMode: true, text: "@Beta what next?" }],
+    ["is not a conversation", { conversationMode: false, text: "what next?" }],
+  ])("sends as before when the message %s", async (_label, options) => {
+    const { tx, result } = sendToGroup(options);
+
+    await result;
+    expect(createdNonces(tx)).toHaveLength(1);
+    expect(createdNonces(tx)[0]?.clientNonce).not.toMatch(/^group-chain:/);
+  });
+
+  it("steers a busy first member and starts the round with the next one", async () => {
+    const { tx, result } = sendToGroup({ conversationMode: true, text: "what next?", busy: true });
+
+    await result;
+    expect(tx.steeringMessage.create).toHaveBeenCalledWith({
+      data: { messageId: "msg-1", botId: "bot-a", userId: "user-1", runId: "run-busy" },
+    });
+    expect(createdNonces(tx)).toEqual([
+      expect.objectContaining({ botId: "bot-b", clientNonce: "group-chain:msg-1:bot-b" }),
+    ]);
   });
 });
 

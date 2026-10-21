@@ -4566,6 +4566,108 @@ describe("group restore with archived bots", () => {
   });
 });
 
+describe("group conversation mode", () => {
+  const members = [
+    {
+      botId: "bot-a",
+      bot: { id: "bot-a", name: "Ada", color: "blue", archivedAt: null, runs: [] },
+    },
+    {
+      botId: "bot-b",
+      bot: { id: "bot-b", name: "Ben", color: "green", archivedAt: null, runs: [] },
+    },
+  ];
+  const group = (conversationMode: boolean) => ({
+    id: "group-1",
+    spaceId: "space-1",
+    userId: "user-1",
+    name: "Crew",
+    pinned: false,
+    conversationMode,
+    sectionId: null,
+    archivedAt: null,
+    createdAt: new Date(0),
+    updatedAt: new Date(0),
+    thread: { id: "thread-1", unread: false, messages: [] },
+    members,
+  });
+
+  async function call(path: string, json: unknown, prisma: unknown) {
+    const handler = new RPCHandler(
+      createRouter({ prisma, env: { sandboxProvider: "fake" } } as unknown as RouterDeps),
+    );
+    const { response } = await handler.handle(
+      new Request(`http://rakazo.test/rpc/groups/${path}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ json }),
+      }),
+      {
+        prefix: "/rpc",
+        context: {
+          actor: {
+            spaceId: "space-1",
+            userId: "user-1",
+            email: "user@example.test",
+            isDeploymentOwner: true,
+          },
+        },
+      },
+    );
+    return response;
+  }
+
+  it("saves the setting with groups.update", async () => {
+    const tx = {
+      $queryRaw: vi.fn(async () => [{ id: "group-1" }]),
+      chatGroup: {
+        findFirst: vi.fn(async () => group(false)),
+        update: vi.fn(async () => ({})),
+        findFirstOrThrow: vi.fn(async () => group(true)),
+      },
+    };
+    const prisma = {
+      $transaction: vi.fn(async (callback: (client: unknown) => Promise<unknown>) => callback(tx)),
+    };
+
+    const response = await call("update", { groupId: "group-1", conversationMode: true }, prisma);
+
+    expect(response?.status).toBe(200);
+    expect(tx.chatGroup.update).toHaveBeenCalledWith({
+      where: { id: "group-1" },
+      data: expect.objectContaining({ conversationMode: true }),
+    });
+    expect(await response?.json()).toMatchObject({ json: { conversationMode: true } });
+  });
+
+  it("copies the setting when a group is duplicated", async () => {
+    const tx = {
+      $queryRaw: vi.fn(async () => []),
+      spaceMember: {
+        findUnique: vi.fn(async () => ({ organizationId: "org-1", space: { deletingAt: null } })),
+      },
+      chatGroup: {
+        create: vi.fn(async () => ({ id: "group-2" })),
+        findFirstOrThrow: vi.fn(async () => ({ ...group(true), id: "group-2" })),
+      },
+      chatGroupMember: { createMany: vi.fn(async () => ({ count: 2 })) },
+      thread: { create: vi.fn(async () => ({ id: "thread-2" })) },
+    };
+    const prisma = {
+      chatGroup: { findFirst: vi.fn(async () => group(true)) },
+      bot: { findMany: vi.fn(async () => members.map((member) => member.bot)) },
+      $transaction: vi.fn(async (callback: (client: unknown) => Promise<unknown>) => callback(tx)),
+    };
+
+    const response = await call("duplicate", { groupId: "group-1" }, prisma);
+
+    expect(response?.status).toBe(200);
+    expect(tx.chatGroup.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ conversationMode: true }),
+    });
+  });
+});
+
 afterEach(() => {
   delete process.env.SANDBOX_MAX_COMPUTERS_PER_USER;
 });

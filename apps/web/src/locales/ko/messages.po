@@ -3050,6 +3050,10 @@ msgstr "멤버"
 msgid "Members ({0})"
 msgstr ""
 
+#: src/pages/GroupPanel.tsx
+msgid "Members take turns"
+msgstr "멤버가 차례로 답변"
+
 #: src/pages/KnowledgeSection.tsx
 #: src/pages/MemorySettingsOverlay.tsx
 #: src/pages/SettingsOverlay.tsx

@@ -3050,6 +3050,10 @@ msgstr "सदस्य"
 msgid "Members ({0})"
 msgstr ""
 
+#: src/pages/GroupPanel.tsx
+msgid "Members take turns"
+msgstr "सदस्य बारी-बारी से जवाब देते हैं"
+
 #: src/pages/KnowledgeSection.tsx
 #: src/pages/MemorySettingsOverlay.tsx
 #: src/pages/SettingsOverlay.tsx

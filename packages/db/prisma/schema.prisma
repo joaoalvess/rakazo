@@ -554,6 +554,8 @@ model ChatGroup {
   userId     String
   name       String
   pinned     Boolean           @default(false)
+  /// Unaddressed messages go to every member in turn, and members wake each other with @mentions.
+  conversationMode Boolean     @default(false)
   sectionId  String?
   section    BotSection?       @relation(fields: [sectionId], references: [id], onDelete: SetNull)
   archivedAt DateTime?
