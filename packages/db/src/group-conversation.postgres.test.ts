@@ -352,6 +352,25 @@ describePostgres("conversation groups (PostgreSQL)", () => {
       ]);
     }));
 
+  it("lets a member handed a missed reply wait again for the next one", () =>
+    fixture(async () => {
+      const question = await personSays("Which venue?");
+      const [adaRun, benRun, cyRun] = await wakeEveryone(question, "Which venue?");
+
+      await expect(finish(adaRun!.id, { text: "The hall." })).resolves.toEqual([]);
+      const [benAgain, ...rest] = await finish(benRun!.id, { decision: "wait" });
+      expect(rest).toEqual([]);
+      await expect(finish(benAgain!, { decision: "wait" })).resolves.toEqual([]);
+
+      const woken = await finish(cyRun!.id, { text: "The hall is booked; try the loft." });
+      const cyReply = await replyOf(cyRun!.id);
+      const runs = await Promise.all(woken.map(turn));
+      expect(runs.map((run) => [run.botId, run.sourceMessageId])).toEqual([
+        [ada.id, cyReply.id],
+        [ben.id, cyReply.id],
+      ]);
+    }));
+
   it("answers a person who named a busy member once it stays silent", () =>
     fixture(async () => {
       const question = await personSays("Who has the numbers?");

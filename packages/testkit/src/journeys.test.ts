@@ -2620,6 +2620,47 @@ describeJourneys("required product journeys", () => {
       await settle();
       return message;
     };
+    const queueMemberRun = async (member: Bot, prompt: string, source: { id: string }) => {
+      const { spaceId, userId } = me;
+      const task = await prisma.task.create({
+        data: { spaceId, botId: member.id, threadId, userId, prompt, status: "queued" },
+      });
+      return prisma.run.create({
+        data: {
+          spaceId,
+          botId: member.id,
+          threadId,
+          taskId: task.id,
+          userId,
+          status: "queued",
+          trigger: "user",
+          sourceMessageId: source.id,
+          groupChainMessageId: source.id,
+        },
+      });
+    };
+    const continueMemberRun = (runId: string) =>
+      runAsSystem("background job run.continue", () =>
+        executor.continueRun(runId, "conversation-worker"),
+      );
+    // The members a person's message wakes take their turns in this order, not the queue's.
+    const sendInOrder = async (text: string, order: Bot[]) => {
+      const message = await createThreadMessage(prisma, {
+        threadId,
+        role: "user",
+        blocks: [{ kind: "text", text }],
+      });
+      for (const member of order) {
+        const run = await queueMemberRun(member, text, message);
+        await continueMemberRun(run.id);
+        await waitForDatabase(async () =>
+          ["completed", "waiting_input"].includes(
+            (await prisma.run.findUniqueOrThrow({ where: { id: run.id } })).status,
+          ),
+        );
+      }
+      return message;
+    };
     const repliesAfter = async (seq: number) =>
       (
         await prisma.message.findMany({
@@ -2664,7 +2705,12 @@ describeJourneys("required product journeys", () => {
         else process.env[budgetNames[index]!] = String(value);
       });
     try {
-      const question = await sendAndSettle("conversation fixture Ari:speak Cy:wait / Cy:speak");
+      const question = await sendInOrder("conversation fixture Ari:speak Cy:wait / Cy:speak", [
+        cy,
+        bo,
+        ari,
+      ]);
+      await settle();
       expect((await repliesAfter(question.seq)).map((message) => message.botId)).toEqual([
         ari.id,
         cy.id,
@@ -2726,6 +2772,101 @@ describeJourneys("required product journeys", () => {
         Bo: ["speak"],
         Cy: ["pass"],
       });
+
+      const earlier = await createThreadMessage(prisma, {
+        threadId,
+        role: "user",
+        blocks: [{ kind: "text", text: "conversation fixture Bo:wait" }],
+      });
+      const busyBo = await queueMemberRun(bo, "conversation fixture Bo:wait", earlier);
+      // Bo is mid-turn when a person names it, and reads that message as claimSteering records it.
+      await prisma.run.update({
+        where: { id: busyBo.id },
+        data: {
+          status: "running",
+          leaseOwner: "conversation-worker",
+          leaseExpiresAt: new Date(Date.now() + 60_000),
+        },
+      });
+      const named = await send("@Bo conversation fixture Bo:speak");
+      await waitForDatabase(
+        async () =>
+          (await prisma.run.count({
+            where: { threadId, id: { not: busyBo.id }, status: { in: [...ACTIVE_RUN_STATUSES] } },
+          })) === 0,
+      );
+      await prisma.steeringMessage.updateMany({
+        where: { messageId: named.id, runId: busyBo.id },
+        data: { claimedAt: new Date() },
+      });
+      await prisma.run.update({
+        where: { id: busyBo.id },
+        data: { status: "queued", leaseOwner: null, leaseExpiresAt: null },
+      });
+      await continueMemberRun(busyBo.id);
+      await waitForDatabase(
+        async () =>
+          (await prisma.run.count({
+            where: { threadId, botId: bo.id, sourceMessageId: named.id, trigger: "follow_up" },
+          })) > 0,
+      );
+      expect(
+        await prisma.run.findUniqueOrThrow({
+          where: { id: busyBo.id },
+          select: { status: true, conversationDecision: true },
+        }),
+      ).toEqual({ status: "completed", conversationDecision: "wait" });
+      expect(await decisions(named.id)).toMatchObject({ Ari: ["pass"], Cy: ["pass"] });
+      // The scripted runtime never claims steering, so its continuation would repeat until stopped.
+      await rpc(app, owner, "threads/stop", { groupId: group.id });
+      await settle();
+
+      const pendingAsks = async (after: number) =>
+        (
+          await prisma.message.findMany({
+            where: { threadId, role: "bot", seq: { gt: after } },
+            orderBy: { seq: "asc" },
+          })
+        )
+          .filter((message) =>
+            (message.blocks as MessageBlock[]).some(
+              (block) => block.kind === "ask" && block.status !== "answered",
+            ),
+          )
+          .map((message) => message.botId);
+      const asked = await sendInOrder("ask me which city to use", [ari, bo, cy]);
+      expect(await pendingAsks(asked.seq)).toEqual([ari.id, bo.id, cy.id]);
+      const answer = await rpc<{ runId: string }>(app, owner, "threads/send", {
+        groupId: group.id,
+        text: "Lisbon",
+      });
+      await waitForDatabase(
+        async () =>
+          (await prisma.run.findUniqueOrThrow({ where: { id: answer.runId } })).status ===
+          "completed",
+      );
+      expect(
+        await prisma.run.findUniqueOrThrow({
+          where: { id: answer.runId },
+          select: { botId: true },
+        }),
+      ).toEqual({ botId: cy.id });
+      expect(await pendingAsks(asked.seq)).toEqual([ari.id, bo.id]);
+      expect(
+        await prisma.run.count({ where: { threadId, sourceMessage: { seq: { gt: asked.seq } } } }),
+      ).toBe(0);
+      const retired = await send("@Ari conversation fixture Ari:speak");
+      await waitForDatabase(
+        async () =>
+          (await prisma.run.count({
+            where: { threadId, status: { in: [...ACTIVE_RUN_STATUSES] } },
+          })) === 1,
+      );
+      expect((await repliesAfter(retired.seq)).map((message) => message.botId)).toEqual([ari.id]);
+      expect(await decisions(retired.id)).toEqual({ Ari: ["speak"], Bo: [], Cy: ["pass"] });
+      expect(await pendingAsks(asked.seq)).toEqual([bo.id]);
+      await rpc(app, owner, "threads/stop", { groupId: group.id });
+      await settle();
 
       setBudgets(3, 1_000);
       const volley = await sendAndSettle("conversation fixture loop Ari:speak Bo:speak");
