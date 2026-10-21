@@ -1,4 +1,5 @@
 import { accountDisplay } from "@rakazo/core";
+import { typeScale } from "@rakazo/ui-tokens";
 import { useKeepAwake } from "expo-keep-awake";
 import { useRouter } from "expo-router";
 import type { ComponentProps } from "react";
@@ -245,7 +246,7 @@ const styles = StyleSheet.create({
     elevation: 6,
   },
   row: { flexDirection: "row", alignItems: "center", gap: 10 },
-  name: { fontSize: 15, fontWeight: "500", maxWidth: 110, writingDirection: "auto" },
+  name: { ...typeScale.cardTitle, maxWidth: 110, writingDirection: "auto" },
   waveform: {
     flex: 1,
     flexDirection: "row",
@@ -264,5 +265,5 @@ const styles = StyleSheet.create({
   actions: { flexDirection: "row", justifyContent: "center", gap: 12, marginTop: 12 },
   buttonFallback: { borderWidth: StyleSheet.hairlineWidth },
   transcript: { marginTop: 12, paddingTop: 10, borderTopWidth: StyleSheet.hairlineWidth, gap: 5 },
-  line: { fontSize: 13, writingDirection: "auto" },
+  line: { ...typeScale.secondary, writingDirection: "auto" },
 });
