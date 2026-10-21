@@ -4488,8 +4488,11 @@ export function createRunExecutor(deps: ExecutorDeps) {
         // Durable interim messages only on genuinely long turns, capped per run.
         const canPublishDurableProgress = () =>
           midTurnProgressBudgetAllows(midTurnProgressCount, Date.now() - turnStartedAtMs);
+        // A conversation-group member that may stay silent posts nothing before its decision.
         const canPublishDurableNarration = () =>
-          runPromotesMidTurnNarration(run.trigger) && canPublishDurableProgress();
+          !groupSilenceAllowed &&
+          runPromotesMidTurnNarration(run.trigger) &&
+          canPublishDurableProgress();
         {
           const priorProgress = await deps.prisma.message.findMany({
             where: { runId: run.id, role: "bot" },
