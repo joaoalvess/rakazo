@@ -2184,6 +2184,7 @@ export function createRouter(deps: RouterDeps) {
           return await groupRepos.createGroup(context.actor, {
             name: duplicateBotName(source.name),
             botIds: source.members.map((member) => member.bot.id),
+            conversationMode: source.conversationMode,
           });
         } catch (error) {
           throw mapSpaceLifecycleError(error);
