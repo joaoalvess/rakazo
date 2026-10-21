@@ -18,6 +18,7 @@ function harness(
   sourceBlocks: unknown,
   existing?: { sourceRuns: { id: string; botId: string }[] },
   ancestry: Record<string, unknown> = {},
+  conversationMode = false,
 ) {
   const runCreate = vi.fn(async () => ({ id: "run-b" }));
   const messageCreate = vi.fn(async () => ({ id: "message-1" }));
@@ -26,6 +27,7 @@ function harness(
     chatGroup: {
       findFirst: vi.fn(async () => ({
         id: "group-1",
+        conversationMode,
         members: ["bot-a", "bot-b", "bot-c"].map((id) => ({
           bot: { id, name: id.toUpperCase() },
         })),
@@ -69,6 +71,7 @@ function harness(
     },
     messageCreate,
     runCreate,
+    tx,
   };
 }
 
@@ -163,20 +166,26 @@ describe("group handoff ownership", () => {
     expect(runCreate).not.toHaveBeenCalled();
   });
 
+  const mentionAncestry = {
+    "run-a": {
+      clientNonce: "group-mention:m2:bot-a",
+      sourceMessage: { runId: "run-z", blocks: [] },
+    },
+    "run-z": {
+      clientNonce: "group-chain:m1:bot-z",
+      sourceMessage: { runId: null, blocks: [] },
+    },
+  };
+  const hopRead = expect.objectContaining({
+    select: expect.objectContaining({ clientNonce: true }),
+  });
+
   it("counts the mentions that woke the sender toward the chain's hop", async () => {
     const { deps, messageCreate } = harness(
       [{ kind: "text", text: "@A can you check?" }],
       undefined,
-      {
-        "run-a": {
-          clientNonce: "group-mention:m2:bot-a",
-          sourceMessage: { runId: "run-z", blocks: [] },
-        },
-        "run-z": {
-          clientNonce: "group-chain:m1:bot-z",
-          sourceMessage: { runId: null, blocks: [] },
-        },
-      },
+      mentionAncestry,
+      true,
     );
 
     await expect(
@@ -188,12 +197,30 @@ describe("group handoff ownership", () => {
       }),
     );
   });
+
+  it("reads no mention ancestry outside a conversation group", async () => {
+    const { deps, messageCreate, tx } = harness(
+      [{ kind: "text", text: "@A can you check?" }],
+      undefined,
+      mentionAncestry,
+    );
+
+    await expect(
+      handoffToGroupBot(deps as never, run, "group-1", { bot_id: "bot-b", message: "Next stage" }),
+    ).resolves.toMatchObject({ ok: true });
+    expect(tx.run.findUnique).not.toHaveBeenCalledWith(hopRead);
+    expect(messageCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ blocks: [expect.objectContaining({ hop: 1 })] }),
+      }),
+    );
+  });
 });
 
 describe("conversation groups", () => {
   const self = { id: "bot-b", name: "Ben" };
 
-  function prisma(conversationMode: boolean, sourceBlocks: unknown[] = []) {
+  function prisma(conversationMode: boolean) {
     return {
       chatGroup: {
         findUnique: vi.fn(async () => ({
@@ -206,35 +233,39 @@ describe("conversation groups", () => {
           ],
         })),
       },
-      message: { findUnique: vi.fn(async () => ({ blocks: sourceBlocks })) },
     } as unknown as PrismaClient;
   }
 
   it("tells members they are in a conversation only when the group is one", async () => {
-    await expect(loadGroupContext(prisma(true), "group-1", self)).resolves.toContain(
-      "This group is a conversation",
-    );
-    await expect(loadGroupContext(prisma(false), "group-1", self)).resolves.toContain(
-      "Never bounce a stage between members.",
-    );
+    await expect(loadGroupContext(prisma(true), "group-1", self)).resolves.toEqual({
+      context: expect.stringContaining("This group is a conversation"),
+      conversationMode: true,
+    });
+    await expect(loadGroupContext(prisma(false), "group-1", self)).resolves.toEqual({
+      context: expect.stringContaining("Never bounce a stage between members."),
+      conversationMode: false,
+    });
   });
 
   it.each([
-    ["a message that names nobody", true, [{ kind: "text", text: "@Ada what next?" }], true],
-    ["a message that names the bot", true, [{ kind: "text", text: "@Ben what next?" }], false],
+    ["a person's message that names nobody", "user", [{ kind: "text", text: "@Ada next?" }], true],
+    [
+      "a person's message that names the bot",
+      "user",
+      [{ kind: "text", text: "@Ben next?" }],
+      false,
+    ],
     [
       "a handoff to the bot",
-      true,
+      "bot",
       [{ kind: "handoff", fromBotId: "bot-a", toBotId: "bot-b", text: "Take it", hop: 1 }],
       false,
     ],
-    ["any message outside a conversation", false, [{ kind: "text", text: "what next?" }], false],
-  ])(
-    "decides whether a member may stay silent on %s",
-    async (_label, conversationMode, blocks, allowed) => {
-      await expect(
-        groupConversationAllowsSilence(prisma(conversationMode, blocks), "group-1", self, "m1"),
-      ).resolves.toBe(allowed);
-    },
-  );
+  ] as const)("decides whether a member may stay silent on %s", (_label, role, blocks, allowed) => {
+    expect(groupConversationAllowsSilence({ role, blocks: [...blocks] }, self)).toBe(allowed);
+  });
+
+  it("keeps a member answering when its source message is not in the loaded history", () => {
+    expect(groupConversationAllowsSilence(undefined, self)).toBe(false);
+  });
 });

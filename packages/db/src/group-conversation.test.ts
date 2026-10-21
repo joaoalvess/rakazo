@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Prisma } from "./client.js";
 import {
-  advanceGroupConversation,
   groupChainRunNonce,
   groupRunHop,
+  lockThreadForRunEnd,
   queueGroupConversationTurn,
 } from "./group-conversation.js";
 
@@ -136,30 +136,16 @@ describe("queueGroupConversationTurn", () => {
   });
 });
 
-describe("advanceGroupConversation", () => {
-  it.each([
-    ["has no group", { thread: { group: null } }],
-    [
-      "is not a conversation",
-      { thread: { group: { id: "g1", conversationMode: false, archivedAt: null } } },
-    ],
-    [
-      "is archived",
-      { thread: { group: { id: "g1", conversationMode: true, archivedAt: new Date() } } },
-    ],
-  ])("queues nothing when the thread %s", async (_label, run) => {
-    const findMany = vi.fn();
-    const tx = {
-      run: { findUnique: vi.fn(async () => ({ id: "run-1", ...run })) },
-      chatGroupMember: { findMany },
-    } as unknown as Prisma.TransactionClient;
+describe("lockThreadForRunEnd", () => {
+  it("names the thread's group only when it is a live conversation", async () => {
+    const tx = (rows: unknown[]) =>
+      ({ $queryRaw: vi.fn(async () => rows) }) as unknown as Prisma.TransactionClient;
 
-    await expect(
-      advanceGroupConversation(tx, "run-1", {
-        id: "message-2",
-        blocks: [{ kind: "text", text: "@Ben look" }],
-      }),
-    ).resolves.toEqual([]);
-    expect(findMany).not.toHaveBeenCalled();
+    await expect(lockThreadForRunEnd(tx([{ conversationGroupId: "g1" }]), "t1")).resolves.toBe(
+      "g1",
+    );
+    await expect(lockThreadForRunEnd(tx([{ conversationGroupId: null }]), "t1")).resolves.toBe(
+      null,
+    );
   });
 });

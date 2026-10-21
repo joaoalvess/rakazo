@@ -3892,19 +3892,6 @@ export function createRunExecutor(deps: ExecutorDeps) {
           peerMessage?.intent,
           peerMessage?.repliesToRequest,
         );
-        const groupSilenceAllowed = thread.groupId
-          ? await groupConversationAllowsSilence(
-              deps.prisma,
-              thread.groupId,
-              bot,
-              run.sourceMessageId,
-            )
-          : false;
-        const allowSilentEmptyRun =
-          allowSilentPeerMessage ||
-          messagingChannelRun ||
-          groupSilenceAllowed ||
-          runAllowsSilentEmpty(run.trigger);
         const emptyResponseText = peerMessage
           ? peerMessage.intent === "result" ||
             peerMessage.intent === "status" ||
@@ -4185,12 +4172,26 @@ export function createRunExecutor(deps: ExecutorDeps) {
           resolved.acceptsImages,
         );
         const acceptsImages = deps.runtime.describe().capabilities.scripted || modelSeesImages;
-        const groupContext = thread.groupId
+        const groupRoster = thread.groupId
+          ? await loadGroupContext(deps.prisma, thread.groupId, {
+              id: bot.id,
+              name: bot.name,
+            })
+          : undefined;
+        const groupSilenceAllowed =
+          groupRoster?.conversationMode === true &&
+          groupConversationAllowsSilence(
+            historyMessages.find((message) => message.id === run.sourceMessageId),
+            bot,
+          );
+        const allowSilentEmptyRun =
+          allowSilentPeerMessage ||
+          messagingChannelRun ||
+          groupSilenceAllowed ||
+          runAllowsSilentEmpty(run.trigger);
+        const groupContext = groupRoster
           ? [
-              await loadGroupContext(deps.prisma, thread.groupId, {
-                id: bot.id,
-                name: bot.name,
-              }),
+              groupRoster.context,
               groupSilenceAllowed ? GROUP_CONVERSATION_SILENT_REPLY_GUIDANCE : undefined,
             ]
               .filter(Boolean)

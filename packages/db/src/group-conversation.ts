@@ -48,6 +48,25 @@ async function latestPersonMessage(tx: Prisma.TransactionClient, threadId: strin
 }
 
 /**
+ * Lock a thread before a run in it ends, as `SELECT ... FOR UPDATE` does, and return its group's
+ * id when that group is a live conversation, so no other thread needs a further read.
+ */
+export async function lockThreadForRunEnd(
+  tx: Prisma.TransactionClient,
+  threadId: string,
+): Promise<string | null> {
+  const [thread] = await tx.$queryRaw<Array<{ conversationGroupId: string | null }>>`
+    SELECT g.id AS "conversationGroupId"
+    FROM threads t
+    LEFT JOIN chat_groups g
+      ON g.id = t."groupId" AND g."conversationMode" AND g."archivedAt" IS NULL
+    WHERE t.id = ${threadId}
+    FOR UPDATE OF t
+  `;
+  return thread?.conversationGroupId ?? null;
+}
+
+/**
  * The bot-message hop that woke a group run: 0 for a person's message, the recorded hop for a
  * handoff, and one more than the posting run for a mention, so both share one budget.
  */
@@ -206,6 +225,7 @@ async function wakeMentionedMembers(
  */
 export async function advanceGroupConversation(
   tx: Prisma.TransactionClient,
+  groupId: string,
   finishedRunId: string,
   postedMessage?: { id: string; blocks: readonly MessageBlock[] },
 ): Promise<string[]> {
@@ -218,16 +238,12 @@ export async function advanceGroupConversation(
       botId: true,
       userId: true,
       sourceMessage: { select: { seq: true } },
-      thread: {
-        select: { group: { select: { id: true, conversationMode: true, archivedAt: true } } },
-      },
     },
   });
-  const group = finished?.thread?.group;
-  if (!finished || !group?.conversationMode || group.archivedAt) return [];
+  if (!finished) return [];
   const members = (
     await tx.chatGroupMember.findMany({
-      where: { groupId: group.id, bot: { archivedAt: null } },
+      where: { groupId, bot: { archivedAt: null } },
       orderBy: [{ createdAt: "asc" }, { botId: "asc" }],
       select: { bot: { select: { id: true, name: true } } },
     })

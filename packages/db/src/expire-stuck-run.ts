@@ -8,7 +8,7 @@ import {
   createPendingSteeringRun,
   discardAnsweredSteering,
 } from "./events.js";
-import { advanceGroupConversation } from "./group-conversation.js";
+import { advanceGroupConversation, lockThreadForRunEnd } from "./group-conversation.js";
 import { createThreadMessageInTransaction } from "./messages.js";
 
 export interface ExpireStuckRunInput {
@@ -36,7 +36,7 @@ export async function expireStuckRun(
   tx: Prisma.TransactionClient,
   input: ExpireStuckRunInput,
 ): Promise<ExpireStuckRunResult | null> {
-  await tx.$queryRaw`SELECT id FROM threads WHERE id = ${input.threadId} FOR UPDATE`;
+  const conversationGroupId = await lockThreadForRunEnd(tx, input.threadId);
   const current = await tx.run.findUnique({
     where: { id: input.runId },
     select: { status: true, updatedAt: true },
@@ -142,7 +142,9 @@ export async function expireStuckRun(
     threadId: run.threadId,
     botId: run.botId,
   });
-  const nextRunIds = await advanceGroupConversation(tx, input.runId);
+  const nextRunIds = conversationGroupId
+    ? await advanceGroupConversation(tx, conversationGroupId, input.runId)
+    : [];
   return {
     seq: cancelledEvent.seq,
     continuationRunId,

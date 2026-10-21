@@ -117,7 +117,9 @@ export async function handoffToGroupBot(
       } as const;
     }
     // Mentions in a conversation group spend the same hop budget as handoffs.
-    const hop = nextBotMessageHop(sourceHandoff?.hop ?? (await groupRunHop(tx, run.id)));
+    const hop = nextBotMessageHop(
+      sourceHandoff?.hop ?? (group.conversationMode ? await groupRunHop(tx, run.id) : undefined),
+    );
     if (botMessageHopExhausted(hop)) {
       return {
         error:
@@ -198,7 +200,7 @@ export async function loadGroupContext(
   prisma: PrismaClient,
   groupId: string,
   self: { id: string; name: string },
-): Promise<string | undefined> {
+): Promise<{ context: string; conversationMode: boolean } | undefined> {
   const group = await prisma.chatGroup.findUnique({
     where: { id: groupId },
     include: {
@@ -212,30 +214,24 @@ export async function loadGroupContext(
     },
   });
   if (!group) return undefined;
-  return renderGroupMembersContext(
-    group.name,
-    group.members.map((member) => member.bot),
-    self,
-    { conversationMode: group.conversationMode },
-  );
+  return {
+    context: renderGroupMembersContext(
+      group.name,
+      group.members.map((member) => member.bot),
+      self,
+      { conversationMode: group.conversationMode },
+    ),
+    conversationMode: group.conversationMode,
+  };
 }
 
 /** A conversation-group member may stay silent unless the message it answers names it. */
-export async function groupConversationAllowsSilence(
-  prisma: PrismaClient,
-  groupId: string,
+export function groupConversationAllowsSilence(
+  source: { role: string; blocks: readonly MessageBlock[] } | undefined,
   self: { id: string; name: string },
-  sourceMessageId: string | null,
-): Promise<boolean> {
-  const [group, source] = await Promise.all([
-    prisma.chatGroup.findUnique({ where: { id: groupId }, select: { conversationMode: true } }),
-    sourceMessageId
-      ? prisma.message.findUnique({ where: { id: sourceMessageId }, select: { blocks: true } })
-      : null,
-  ]);
-  if (!group?.conversationMode) return false;
-  const blocks = MessageBlock.array().safeParse(source?.blocks ?? []).data ?? [];
-  return !blocks.some((block) =>
+): boolean {
+  if (!source) return false;
+  return !source.blocks.some((block) =>
     block.kind === "text"
       ? hasMentionToken(block.text, self.name)
       : block.kind === "handoff" && block.toBotId === self.id,

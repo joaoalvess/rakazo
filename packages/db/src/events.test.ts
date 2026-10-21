@@ -138,6 +138,55 @@ describe("finalizeRun", () => {
     expect(publish).toHaveBeenCalledOnce();
   });
 
+  it("reads nothing more to end a run outside a conversation group", async () => {
+    const tx = {
+      $queryRaw: vi.fn(async () => [{ conversationGroupId: null }]),
+      run: {
+        findUnique: vi.fn(async () => ({ status: "running" })),
+        findUniqueOrThrow: vi.fn(async () => ({ sourceMessage: null })),
+        findFirst: vi.fn(async () => null),
+        updateMany: vi.fn(async () => ({ count: 1 })),
+      },
+      attempt: { updateMany: vi.fn(async () => ({ count: 1 })) },
+      task: { updateMany: vi.fn(async () => ({ count: 1 })) },
+      thread: { update: vi.fn(async () => ({ nextEventSeq: 1 })) },
+      event: {
+        create: vi.fn(async () => ({ threadId: "thread-1", seq: 0 })),
+        deleteMany: vi.fn(async () => ({ count: 0 })),
+      },
+      steeringMessage: {
+        findMany: vi.fn(async () => []),
+        updateMany: vi.fn(async () => ({ count: 0 })),
+      },
+      message: { findFirst: vi.fn(async () => null) },
+      bot: { update: vi.fn(async () => ({})) },
+    };
+    const prisma = {
+      $transaction: vi.fn(async (callback: (client: typeof tx) => unknown) => callback(tx)),
+    } as unknown as PrismaClient;
+
+    await expect(
+      finalizeRun(prisma, {
+        spaceId: "space-1",
+        threadId: "thread-1",
+        botId: "bot-1",
+        runId: "run-1",
+        taskId: "task-1",
+        attemptId: "attempt-1",
+        leaseOwner: "worker-1",
+        leaseFence: 1,
+        outcome: "failed",
+        error: "failed",
+      }),
+    ).resolves.toEqual({ continuationRunId: null });
+    expect(tx.$queryRaw).toHaveBeenCalledOnce();
+    expect(tx.run.findUnique).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        select: expect.objectContaining({ sourceMessage: expect.anything() }),
+      }),
+    );
+  });
+
   it("resumes a held messaging inbound as a messaging run", async () => {
     const tx = {
       $queryRaw: vi.fn(async () => []),

@@ -28,7 +28,7 @@ import { getLogger } from "@rakazo/logging";
 import { cancelRunsInTransaction } from "./cancel-runs.js";
 import type { Prisma, PrismaClient } from "./client.js";
 import { expireComputerExecutionLeases } from "./computers.js";
-import { advanceGroupConversation } from "./group-conversation.js";
+import { advanceGroupConversation, lockThreadForRunEnd } from "./group-conversation.js";
 import {
   assertRunCanWriteHistory,
   assertRunIsCancelled,
@@ -1522,7 +1522,7 @@ async function finalizeRunOnce(
   nextRunIds: string[];
 } | null> {
   return prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-    await tx.$queryRaw`SELECT id FROM threads WHERE id = ${input.threadId} FOR UPDATE`;
+    const conversationGroupId = await lockThreadForRunEnd(tx, input.threadId);
     let writableRun: { startedAt: Date | null } | undefined;
     try {
       writableRun = await assertRunCanWriteHistory(tx, input.runId);
@@ -1635,7 +1635,9 @@ async function finalizeRunOnce(
       });
     }
     const continuationRunId = await createPendingSteeringRun(tx, input);
-    const nextRunIds = await advanceGroupConversation(tx, input.runId, postedMessage);
+    const nextRunIds = conversationGroupId
+      ? await advanceGroupConversation(tx, conversationGroupId, input.runId, postedMessage)
+      : [];
     await tx.bot.update({ where: { id: input.botId }, data: { updatedAt: now } });
     return { threadId: lastEvent.threadId, seq: lastEvent.seq, continuationRunId, nextRunIds };
   });
