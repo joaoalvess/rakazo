@@ -65,7 +65,7 @@ export function ComputerPanel({
           <div className="grid h-full place-items-center text-sm text-muted-foreground/80">
             <Trans>Open in full window</Trans>
           </div>
-        ) : computer?.kind === "desktop" ? (
+        ) : computer?.graphical === false ? (
           <DesktopKindEmptyState className="grid h-full place-items-center px-6 text-center text-sm text-muted-foreground/80" />
         ) : computer?.state === "running" && embeddedScreenUrl && !computerScreenError ? (
           <iframe

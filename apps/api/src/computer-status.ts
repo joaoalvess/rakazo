@@ -1,3 +1,4 @@
+import type { SandboxProvider } from "@rakazo/adapter-kit";
 import { computerSupportsTerminal, computerSupportsUpdate } from "@rakazo/adapters";
 import type { ComputerStatus } from "@rakazo/contracts";
 import { ACTIVE_RUN_STATUSES, computerScreenSize } from "@rakazo/core";
@@ -49,6 +50,11 @@ export async function resolveBusyBotName(
     : null;
 }
 
+export function sandboxHasDesktopScreens(sandbox?: Pick<SandboxProvider, "describe">) {
+  const description = sandbox?.describe();
+  return description?.id === "desktop" && description.capabilities.graphical;
+}
+
 export function toComputerStatus(
   botId: string,
   computer: {
@@ -62,6 +68,7 @@ export function toComputerStatus(
     maintenanceId?: string | null;
   } | null,
   busyBotName: string | null = null,
+  desktopScreens = false,
 ): ComputerStatus {
   const state = computer?.maintenanceId
     ? "booting"
@@ -91,5 +98,6 @@ export function toComputerStatus(
     busyBotName,
     canUpdate: computerSupportsUpdate(kind),
     terminalAvailable: computerSupportsTerminal(kind),
+    graphical: kind !== "desktop" || desktopScreens,
   };
 }

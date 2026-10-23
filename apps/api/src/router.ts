@@ -275,6 +275,7 @@ import type { BillingService } from "./billing.js";
 import {
   executionBlocksUserTakeover,
   resolveBusyBotName,
+  sandboxHasDesktopScreens,
   toComputerStatus,
 } from "./computer-status.js";
 import { searchIntegrationCatalog } from "./integration-catalog.js";
@@ -7027,7 +7028,7 @@ async function computerStatus(
     botId,
     botName: bot.name,
   });
-  return toComputerStatus(botId, bot.computer, busyBotName);
+  return toComputerStatus(botId, bot.computer, busyBotName, sandboxHasDesktopScreens(deps.sandbox));
 }
 
 /** Hand the user's screen control for this bot back, continuing any run waiting on it. */

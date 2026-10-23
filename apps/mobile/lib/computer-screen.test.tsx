@@ -223,6 +223,7 @@ const botWorking: ComputerStatus = {
   busyBotName: "Basil",
   canUpdate: false,
   terminalAvailable: false,
+  graphical: true,
 };
 
 function respond(status: ComputerStatus) {

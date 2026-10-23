@@ -2980,13 +2980,13 @@ function SpaceShell() {
     ) : null;
   const computerPreviewScreen =
     !computerOpen &&
-    computer?.kind !== "desktop" &&
+    computer?.graphical !== false &&
     computer?.state === "running" &&
     Boolean(embeddedScreenUrl) &&
     !computerScreenError;
   const showingRecoveryHint =
     !computerOpen &&
-    computer?.kind !== "desktop" &&
+    computer?.graphical !== false &&
     !computerPreviewScreen &&
     !computerScreenError &&
     showComputerRecoveryHint;

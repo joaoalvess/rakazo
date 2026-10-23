@@ -45,7 +45,11 @@ import {
   resolveGroupSendAttachments,
   resolveSendAttachments,
 } from "./artifacts.js";
-import { resolveBusyBotName, toComputerStatus } from "./computer-status.js";
+import {
+  resolveBusyBotName,
+  sandboxHasDesktopScreens,
+  toComputerStatus,
+} from "./computer-status.js";
 import { withSerializableRetry } from "./serializable-retry.js";
 import { loadMessagePage } from "./thread-message-pages.js";
 
@@ -335,7 +339,7 @@ export async function threadHead(prisma: PrismaClient, target: ThreadTarget) {
 }
 
 export async function threadSnapshot(
-  deps: { prisma: PrismaClient },
+  deps: { prisma: PrismaClient; sandbox?: Pick<SandboxProvider, "describe"> },
   target: ThreadTarget,
 ): Promise<ThreadSnapshot> {
   // Lock the thread row so messages, the event cursor, active runs, and live
@@ -440,7 +444,12 @@ export async function threadSnapshot(
       olderCursor: core.messagePage.olderCursor,
       run: core.run ? mapRun(core.run) : null,
       activeRuns: core.activeRuns.map(mapRun),
-      computer: toComputerStatus(target.botId, target.bot.computer, busyBotName),
+      computer: toComputerStatus(
+        target.botId,
+        target.bot.computer,
+        busyBotName,
+        sandboxHasDesktopScreens(deps.sandbox),
+      ),
     };
   }
 
