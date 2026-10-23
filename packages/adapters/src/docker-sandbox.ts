@@ -34,7 +34,7 @@ export const SCREEN_RELEASE_TIMEOUT_MS = 8_000;
 const SANDBOX_ERROR_RESPONSE_TIMEOUT_MS = 1_000;
 const SANDBOX_SUCCESS_RESPONSE_TIMEOUT_MS = 30_000;
 
-async function safeBody(res: Response, signal?: AbortSignal): Promise<string> {
+export async function safeBody(res: Response, signal?: AbortSignal): Promise<string> {
   const declared = Number(res.headers.get("content-length") ?? 0);
   if (Number.isFinite(declared) && declared > MAX_SANDBOX_ERROR_RESPONSE_BYTES) {
     cancelResponseBody(res);
@@ -59,7 +59,7 @@ function cancelResponseBody(res: Response): void {
   }
 }
 
-async function readSandboxJson<T>(
+export async function readSandboxJson<T>(
   res: Response,
   signal: AbortSignal,
   maxBytes = MAX_SANDBOX_SUCCESS_RESPONSE_BYTES,

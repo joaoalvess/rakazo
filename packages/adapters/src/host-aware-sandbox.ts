@@ -13,11 +13,13 @@ import type {
   TerminalRequest,
   WorkspaceDirectoryRequest,
 } from "@rakazo/adapter-kit";
+import { resolveSupervisorToken } from "@rakazo/core";
 import type { PrismaClient } from "@rakazo/db";
 import { cancelComputerRunWork } from "./computer-idle.js";
 import { manageComputerWorkspaceDirectories } from "./computer-workspace.js";
 import { assertHostCommandsAllowed, DesktopSandboxProvider } from "./desktop-sandbox.js";
 import { HostComputerSandbox } from "./host-computer-sandbox.js";
+import { MacScreensClient } from "./macos-screens-client.js";
 import { createSandboxProvider, type SandboxProviderOptions } from "./sandbox-factory.js";
 
 export function sandboxKindForBot(envKind: string, computerHost: string | null | undefined) {
@@ -34,6 +36,14 @@ export function createRunSandbox(
     return new DesktopSandboxProvider({
       root: opts.dataDir,
       hostRoots: [homedir()],
+      ...(opts.macScreensUrl
+        ? {
+            screens: new MacScreensClient(
+              opts.macScreensUrl,
+              opts.supervisorToken ?? resolveSupervisorToken(),
+            ),
+          }
+        : {}),
     });
   }
   const primary = createSandboxProvider(kind, opts);

@@ -29,6 +29,7 @@ export interface SandboxProviderOptions {
   boatApiKey?: string;
   boatApiUrl?: string;
   dataDir?: string;
+  macScreensUrl?: string;
 }
 
 function missingRemoteKey(

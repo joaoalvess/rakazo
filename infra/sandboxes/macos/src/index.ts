@@ -250,11 +250,11 @@ export async function startMacScreens() {
     async act(key, actions) {
       return computer(await openScreen(key)).act(actions);
     },
-    async browser(key, command, signal) {
+    async browser(key, command, signal, home) {
       return computer(await openScreen(key)).usePage(() => {
         const window = registry.get(key)?.browser;
         if (!window) throw new Error("the bot's browser window is not available");
-        return pageBrowser.run(command, window.windowId, signal);
+        return pageBrowser.run(command, window.windowId, signal, home);
       });
     },
     async wake(key) {

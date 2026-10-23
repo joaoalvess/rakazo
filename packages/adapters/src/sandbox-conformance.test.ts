@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import { fakeBoatProvider as fakeBoat } from "./boat-sandbox.test-support.js";
 import { DesktopSandboxProvider } from "./desktop-sandbox.js";
 import { FakeSandboxProvider } from "./fake-sandbox.js";
+import { MacScreensClient } from "./macos-screens-client.js";
 import { assertSandboxWorkspaceContract, provisionPrepared } from "./sandbox-test-support.js";
 
 const ctx = {
@@ -56,6 +57,37 @@ describe("sandbox conformance", () => {
       );
       await assertSandboxWorkspaceContract(provider, computer, ctx);
       await provider.destroy(computer, ctx);
+    }
+  });
+
+  it("keeps the contract when a desktop computer acts through the macOS screens supervisor", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init: RequestInit) =>
+        Response.json({
+          completed: JSON.parse(String(init.body)).actions.length,
+          observation: {
+            image: Buffer.from("png").toString("base64"),
+            mimeType: "image/png",
+            width: 1280,
+            height: 800,
+          },
+        }),
+      ),
+    );
+    const provider = new DesktopSandboxProvider({
+      screens: new MacScreensClient("http://127.0.0.1:7092", "supervisor-token"),
+    });
+    try {
+      const computer = await provisionPrepared(
+        provider,
+        { botId: "portable-mac", homePath: "/tmp/portable-mac" },
+        ctx,
+      );
+      await assertSandboxWorkspaceContract(provider, computer, ctx);
+      await provider.destroy(computer, ctx);
+    } finally {
+      vi.unstubAllGlobals();
     }
   });
 

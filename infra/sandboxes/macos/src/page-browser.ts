@@ -15,8 +15,8 @@ export class PageBrowser {
     private readonly timeoutMs = TIMEOUT_MS,
   ) {}
 
-  async run(command: PageBrowserCommand, windowId: number, signal?: AbortSignal) {
-    const { code, stdout, timedOut } = await this.spawn(command, windowId, signal);
+  async run(command: PageBrowserCommand, windowId: number, signal?: AbortSignal, home?: string) {
+    const { code, stdout, timedOut } = await this.spawn(command, windowId, signal, home);
     if (code !== 0 || stdout === undefined) {
       throw new Error(
         timedOut
@@ -31,13 +31,19 @@ export class PageBrowser {
     return JSON.parse(stdout) as unknown;
   }
 
-  private spawn(command: PageBrowserCommand, windowId: number, signal?: AbortSignal) {
+  private spawn(
+    command: PageBrowserCommand,
+    windowId: number,
+    signal?: AbortSignal,
+    home?: string,
+  ) {
     return new Promise<{ code: number | null; stdout?: string; timedOut: boolean }>(
       (resolve, reject) => {
         signal?.throwIfAborted();
         const child = spawn(this.script, [command.command], {
           env: {
             ...this.env,
+            ...(home ? { HOME: home } : {}),
             RAKAZO_CDP_WINDOW_ID: String(windowId),
             RAKAZO_BROWSER_WATCH_STDIN: "1",
             RAKAZO_BROWSER_ARGS_STDIN: "1",

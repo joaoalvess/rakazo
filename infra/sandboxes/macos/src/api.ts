@@ -1,3 +1,4 @@
+import path from "node:path";
 import { hasValidBearerToken } from "@rakazo/core";
 import { type Context, Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
@@ -22,7 +23,12 @@ export interface ScreenService {
   revokeControl(record: ScreenRecord): Promise<void>;
   observe(key: string): Promise<Observation>;
   act(key: string, actions: ComputerAction[]): Promise<number>;
-  browser(key: string, command: PageBrowserCommand, signal?: AbortSignal): Promise<unknown>;
+  browser(
+    key: string,
+    command: PageBrowserCommand,
+    signal?: AbortSignal,
+    home?: string,
+  ): Promise<unknown>;
   wake(key: string): Promise<void>;
 }
 
@@ -119,6 +125,16 @@ function inputAction(input: z.infer<typeof inputSchema>["input"]): ComputerActio
     button: input.button,
     type: input.type ?? "click",
   };
+}
+
+function computerHome(header: string | undefined) {
+  if (header === undefined) return undefined;
+  try {
+    const home = decodeURIComponent(header);
+    return path.isAbsolute(home) ? home : null;
+  } catch {
+    return null;
+  }
 }
 
 function errorMessage(error: unknown) {
@@ -222,8 +238,12 @@ export function createApi(service: ScreenService, supervisorToken: string) {
     const parsed = browserSchema.safeParse(await c.req.json().catch(() => undefined));
     if (!parsed.success) return c.json({ error: "invalid browser command" }, 400);
     const body = parsed.data;
+    const home = computerHome(c.req.header("x-rakazo-computer-home"));
+    if (home === null) return c.json({ error: "invalid computer home" }, 400);
     try {
-      return c.json(await service.browser(screenKey(c, c.req.param("id")), body, c.req.raw.signal));
+      return c.json(
+        await service.browser(screenKey(c, c.req.param("id")), body, c.req.raw.signal, home),
+      );
     } catch (error) {
       const detail = errorMessage(error);
       return c.json({

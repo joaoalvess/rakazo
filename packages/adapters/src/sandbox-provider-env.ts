@@ -47,6 +47,7 @@ export function sandboxProviderOptionsFromEnv(
   | "railwaySandboxRegion"
   | "boatApiKey"
   | "boatApiUrl"
+  | "macScreensUrl"
 > {
   return {
     hostComputerUrl: source.SANDBOX_HOST_URL,
@@ -65,6 +66,7 @@ export function sandboxProviderOptionsFromEnv(
     railwaySandboxRegion: optional(source.RAILWAY_SANDBOX_REGION),
     boatApiKey: boatApiKeyFromEnv(source),
     boatApiUrl: boatApiUrlFromEnv(source),
+    macScreensUrl: optional(source.RAKAZO_MAC_SCREENS_URL),
   };
 }
 

@@ -49,6 +49,7 @@ import {
   win32NtRelativeAvailable,
 } from "./desktop-sandbox-win32-path.js";
 import { removeOwnedWorkspaceChildren } from "./desktop-workspace-cleanup.js";
+import type { MacScreensClient } from "./macos-screens-client.js";
 import { hostCommandEnvironment } from "./sandbox-command-environment.js";
 
 const O_NOFOLLOW = constants.O_NOFOLLOW ?? 0;
@@ -68,18 +69,18 @@ export function assertHostCommandsAllowed(
   );
 }
 
-export function describeDesktopSandbox() {
+export function describeDesktopSandbox(screens = false) {
   return {
     id: "desktop",
     contractVersion: "1",
     adapterVersion: "0.1.0",
     capabilities: {
-      graphical: false,
+      graphical: screens,
       pty: true,
       snapshots: true,
-      takeover: false,
+      takeover: screens,
       persistentHome: true,
-      multiScreen: false,
+      multiScreen: screens,
     },
   };
 }
@@ -96,6 +97,9 @@ interface DesktopBox {
 
 export class DesktopSandboxProvider implements SandboxProvider {
   readonly boxes = new Map<string, DesktopBox>();
+  readonly pageBrowser?: SandboxProvider["pageBrowser"];
+  readonly setScreenControl?: SandboxProvider["setScreenControl"];
+  readonly releaseScreen?: SandboxProvider["releaseScreen"];
   private readonly processTrees = new Map<NativeProcessTree, { home: string; runId?: string }>();
   private processSweep?: NodeJS.Timeout;
 
@@ -145,11 +149,24 @@ export class DesktopSandboxProvider implements SandboxProvider {
   }
 
   constructor(
-    private readonly opts: { root?: string; hostRoots?: string[]; maxFileBytes?: number } = {},
-  ) {}
+    private readonly opts: {
+      root?: string;
+      hostRoots?: string[];
+      maxFileBytes?: number;
+      screens?: MacScreensClient;
+    } = {},
+  ) {
+    const screens = opts.screens;
+    if (!screens) return;
+    this.pageBrowser = (computer, request, context) =>
+      screens.pageBrowser(computer, this.requiredBox(computer).home, request, context);
+    this.setScreenControl = (computer, interactive, context, controlToken) =>
+      screens.setScreenControl(computer, interactive, context, controlToken);
+    this.releaseScreen = (computer, context) => screens.releaseScreen(computer, context);
+  }
 
   describe() {
-    return describeDesktopSandbox();
+    return describeDesktopSandbox(Boolean(this.opts.screens));
   }
 
   async provision(
@@ -296,9 +313,10 @@ export class DesktopSandboxProvider implements SandboxProvider {
 
   async connectScreen(
     computer: ComputerRef,
-    _request: ScreenRequest,
-    _context: AdapterContext,
+    request: ScreenRequest,
+    context: AdapterContext,
   ): Promise<ScreenSession> {
+    if (this.opts.screens) return this.opts.screens.connectScreen(computer, request, context);
     return {
       url: `desktop://screen/${computer.id}`,
       mimeType: "text/plain",
@@ -309,20 +327,36 @@ export class DesktopSandboxProvider implements SandboxProvider {
   async sendInput(
     computer: ComputerRef,
     input: ComputerInput,
-    _lease: ControlLeaseRef,
-    _context: AdapterContext,
+    lease: ControlLeaseRef,
+    context: AdapterContext,
   ): Promise<void> {
+    if (this.opts.screens) return this.opts.screens.sendInput(computer, input, lease, context);
     const box = this.boxFor(computer);
     if (box) applyPlaceholderAction(box, input);
   }
 
-  async observe(computer: ComputerRef) {
+  async observe(computer: ComputerRef, context?: AdapterContext) {
+    if (this.opts.screens && context) return this.opts.screens.observe(computer, context);
     return placeholderObservation(this.requiredBox(computer).screen);
   }
 
-  async act(computer: ComputerRef, request: ComputerActionRequest, _context: AdapterContext) {
+  async act(computer: ComputerRef, request: ComputerActionRequest, context: AdapterContext) {
     const box = this.requiredBox(computer);
     const actions = boundedComputerActions(request.actions);
+    if (this.opts.screens) {
+      return this.opts.screens.act(
+        computer,
+        {
+          ...request,
+          actions: actions.map((action) =>
+            action.kind === "open" && !/^https?:\/\//i.test(action.path)
+              ? { ...action, path: path.join(box.home, normalizeWorkspacePath(action.path)) }
+              : action,
+          ),
+        },
+        context,
+      );
+    }
     for (const action of actions) applyPlaceholderAction(box, action);
     return {
       completed: actions.length,

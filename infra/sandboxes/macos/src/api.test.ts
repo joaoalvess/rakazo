@@ -13,7 +13,7 @@ let registry: ScreenRegistry;
 let opened: string[];
 let revoked: ScreenRecord[];
 let acted: Array<[string, ComputerAction[]]>;
-let browsed: Array<[string, PageBrowserCommand]>;
+let browsed: Array<[string, PageBrowserCommand, string | undefined]>;
 let woken: string[];
 let failure: Error | undefined;
 let app: ReturnType<typeof createApi>;
@@ -52,9 +52,9 @@ beforeEach(async () => {
       acted.push([key, actions]);
       return actions.length;
     },
-    async browser(key, command) {
+    async browser(key, command, _signal, home) {
       if (failure) throw failure;
-      browsed.push([key, command]);
+      browsed.push([key, command, home]);
       return { ok: true, url: "https://example.com/" };
     },
     async wake(key) {
@@ -219,11 +219,20 @@ describe("macOS screens API", () => {
       command: "act",
       actions: [{ kind: "fill", ref: "e1", text: "x", origin: "https://login.example.com" }],
     };
-    await request("POST", "/computers/c1/browser", fill);
+    await request("POST", "/computers/c1/browser", fill, {
+      "x-rakazo-computer-home": encodeURIComponent("/Users/joão/data/bot-a"),
+    });
     expect(browsed).toEqual([
-      ["bot-a", { command: "snapshot" }],
-      ["bot-a", fill],
+      ["bot-a", { command: "snapshot" }, undefined],
+      ["bot-a", fill, "/Users/joão/data/bot-a"],
     ]);
+    const relative = await request(
+      "POST",
+      "/computers/c1/browser",
+      { command: "snapshot" },
+      { "x-rakazo-computer-home": "data/bot-a" },
+    );
+    expect(relative.status).toBe(400);
     for (const invalid of [
       { command: "navigate", url: "file:///etc/hosts" },
       { command: "navigate", url: "https://user:secret@example.com" },
