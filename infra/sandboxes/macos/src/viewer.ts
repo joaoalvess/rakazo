@@ -25,7 +25,12 @@ export interface ViewerOptions {
   novncRoot: string;
   feeds: ScreenFeeds;
   authorize(token: string): ViewerGrant | undefined;
-  controlInput?(grant: ViewerGrant): (event: ClientEvent) => void;
+  controlInput?(grant: ViewerGrant): ControlSession;
+}
+
+export interface ControlSession {
+  handle(event: ClientEvent): void;
+  close(): void;
 }
 
 const EMBED_FILES = new Set(["/embed.html", "/clipboard-bridge.js", "/mobile-keyboard.js"]);
@@ -106,7 +111,7 @@ async function serveStatic(
 
 class ViewerSession implements FeedViewer {
   private readonly rfb: RfbServer;
-  private readonly input?: (event: ClientEvent) => void;
+  private readonly input?: ControlSession;
   private detach?: () => void;
   private needsFull = true;
   private closed = false;
@@ -137,6 +142,7 @@ class ViewerSession implements FeedViewer {
     ws.on("close", () => {
       this.closed = true;
       this.detach?.();
+      this.input?.close();
     });
     ws.on("error", () => this.close());
     this.rfb.start();
@@ -183,7 +189,7 @@ class ViewerSession implements FeedViewer {
       }
       return;
     }
-    this.input?.(event);
+    this.input?.handle(event);
   }
 
   private send(data: Buffer) {

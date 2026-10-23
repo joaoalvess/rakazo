@@ -35,7 +35,8 @@ export interface DisplaydRequest {
     | "screenshot"
     | "overlay"
     | "input"
-    | "takeover";
+    | "takeover"
+    | "windows";
   slot?: number;
   cursor?: { x: number; y: number };
   click?: { x: number; y: number };
@@ -57,6 +58,14 @@ export interface DisplaydResponse {
   permissions?: { screenCapture: boolean; postEvents: boolean; accessibility: boolean };
   image?: string;
   mimeType?: "image/png" | "image/jpeg";
+  windows?: WindowInfo[];
+}
+
+export interface WindowInfo {
+  owner: string;
+  pid: number;
+  layer: number;
+  bounds: Rect;
 }
 
 export interface FrameSubscription {

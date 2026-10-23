@@ -15,6 +15,7 @@ let baseUrl: string;
 let pushFrame: ((frame: Frame) => void) | undefined;
 let fullRequests = 0;
 let closedSubscriptions = 0;
+let closedControls = 0;
 const inputs: Array<{ grant: ViewerGrant; event: ClientEvent }> = [];
 
 const grants: Record<string, ViewerGrant> = {
@@ -44,6 +45,7 @@ beforeEach(async () => {
   await writeFile(path.join(novncRoot, "core", "rfb.js"), "export default {};");
   fullRequests = 0;
   closedSubscriptions = 0;
+  closedControls = 0;
   inputs.length = 0;
   const feeds = new ScreenFeeds(
     {
@@ -66,7 +68,12 @@ beforeEach(async () => {
     novncRoot,
     feeds,
     authorize: (token) => grants[token],
-    controlInput: (grant) => (event) => inputs.push({ grant, event }),
+    controlInput: (grant) => ({
+      handle: (event) => inputs.push({ grant, event }),
+      close: () => {
+        closedControls += 1;
+      },
+    }),
   });
   await new Promise<void>((resolve) => viewer.server.listen(0, "127.0.0.1", resolve));
   baseUrl = `127.0.0.1:${(viewer.server.address() as AddressInfo).port}`;
@@ -180,6 +187,8 @@ describe("viewer", () => {
     await control.connect();
     viewer.revoke((grant) => grant.control);
     await control.closed;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(closedControls).toBe(1);
     expect(view.socket.readyState).toBe(WebSocket.OPEN);
     view.socket.close();
     await view.closed;

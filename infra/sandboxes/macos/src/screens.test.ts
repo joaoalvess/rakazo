@@ -54,10 +54,11 @@ describe("ScreenRegistry", () => {
     expect(registry.byToken("control-a")).toBeUndefined();
   });
 
-  it("persists screens and view tokens but never control tokens", async () => {
+  it("persists screens, view tokens and browser windows but never control tokens", async () => {
     const registry = new ScreenRegistry(file, 2);
     const { record } = await registry.allocate("bot-a", 1);
     registry.setControl("bot-a", "control-a");
+    await registry.setBrowser("bot-a", { browserId: "chrome-1", windowId: 7 });
     await registry.touch("bot-a", 5);
     expect(await readFile(file, "utf8")).not.toContain("control-a");
     const restored = new ScreenRegistry(file, 2);
@@ -66,6 +67,7 @@ describe("ScreenRegistry", () => {
       key: "bot-a",
       slot: 0,
       viewToken: record.viewToken,
+      browser: { browserId: "chrome-1", windowId: 7 },
       lastUsedAt: 5,
     });
   });

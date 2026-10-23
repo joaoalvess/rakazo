@@ -8,7 +8,8 @@ import { loadRootEnv } from "@rakazo/core/node/load-root-env";
 import { SERVICE_NAMES } from "@rakazo/logging";
 import { createRootLogger } from "@rakazo/logging/axiom";
 import { createApi, type ScreenService } from "./api.js";
-import { DisplaydClient } from "./displayd.js";
+import { Chrome } from "./chrome.js";
+import { DisplaydClient, type Rect } from "./displayd.js";
 import { ScreenFeeds } from "./feed.js";
 import { ControlInput } from "./input.js";
 import {
@@ -18,6 +19,7 @@ import {
   type ScreenRecord,
   ScreenRegistry,
 } from "./screens.js";
+import { TakeoverInput } from "./takeover.js";
 import { createViewerServer } from "./viewer.js";
 
 loadRootEnv();
@@ -42,6 +44,7 @@ export async function startMacScreens() {
     process.env.MAC_SCREENS_DISPLAYD_DIR ??
       path.join(homedir(), "Library", "Application Support", "Rakazo", "displayd"),
   );
+  const chrome = new Chrome(`http://127.0.0.1:${process.env.MAC_SCREENS_CHROME_PORT ?? 9333}`);
   const registry = new ScreenRegistry(path.join(stateDir, "state.json"), resolveScreenLimit());
   await registry.load();
   const feeds = new ScreenFeeds(displayd, {
@@ -69,16 +72,44 @@ export async function startMacScreens() {
         logger.warn("takeover input failed", { slot: grant.slot, error: error.message });
       void displayd.call({ op: "takeover", slot: grant.slot, active: true }).catch(warn);
       void displayd.call({ op: "overlay", slot: grant.slot, cursorHidden: true }).catch(warn);
-      const input = new ControlInput((events) => {
-        void displayd.call({ op: "input", slot: grant.slot, events }).catch(warn);
-      });
-      return (event) => input.handle(event);
+      const takeover = new TakeoverInput(
+        {
+          display: async () => {
+            const { screens } = await displayd.call({ op: "status" });
+            const screen = screens?.find((candidate) => candidate.slot === grant.slot);
+            if (!screen) throw new Error(`screen ${grant.slot} is not open`);
+            return screen.bounds;
+          },
+          page: async () => {
+            const browser = registry.get(grant.screenKey)?.browser;
+            return browser ? chrome.pageView(browser) : undefined;
+          },
+          windows: async () =>
+            (await displayd.call({ op: "windows", slot: grant.slot })).windows ?? [],
+          native: (events) => displayd.call({ op: "input", slot: grant.slot, events }),
+        },
+        warn,
+      );
+      const input = new ControlInput((events) => takeover.send(events));
+      return { handle: (event) => input.handle(event), close: () => takeover.release() };
     },
   });
+
+  const placeBrowser = async (record: ScreenRecord, display: Rect) => {
+    try {
+      await registry.setBrowser(record.key, await chrome.placeWindow(record.browser, display));
+    } catch (error) {
+      logger.warn("browser window unavailable", {
+        screen: record.key,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  };
 
   const closeScreen = async (record: ScreenRecord) => {
     viewer.revoke((grant) => grant.screenKey === record.key);
     feeds.close(record.slot);
+    if (record.browser) await chrome.closeWindow(record.browser).catch(() => undefined);
     await displayd.call({ op: "close", slot: record.slot });
   };
 
@@ -91,7 +122,8 @@ export async function startMacScreens() {
         logger.info("screen evicted", { screen: evicted.key, slot: evicted.slot });
         await closeScreen(evicted);
       }
-      await displayd.call({ op: "open", slot: record.slot });
+      const { screen } = await displayd.call({ op: "open", slot: record.slot });
+      if (screen) await placeBrowser(record, screen.bounds);
       return record;
     },
     async revokeControl(record) {
@@ -116,6 +148,7 @@ export async function startMacScreens() {
     });
   });
   const shutdown = async () => {
+    chrome.close();
     await viewer.close();
     await logger.flush({ timeoutMs: 2_000 });
     process.exit(0);

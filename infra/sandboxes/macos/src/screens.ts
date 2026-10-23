@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
+import type { BrowserWindow } from "./chrome.js";
 
 export const SLOT_COUNT = 16;
 export const SCREEN_WIDTH = 1280;
@@ -12,6 +13,7 @@ export interface ScreenRecord {
   slot: number;
   viewToken: string;
   controlToken?: string;
+  browser?: BrowserWindow;
   lastUsedAt: number;
 }
 
@@ -25,6 +27,7 @@ const stateSchema = z.object({
         .min(0)
         .max(SLOT_COUNT - 1),
       viewToken: z.string().min(1),
+      browser: z.object({ browserId: z.string().min(1), windowId: z.number().int() }).optional(),
       lastUsedAt: z.number(),
     }),
   ),
@@ -123,6 +126,13 @@ export class ScreenRegistry {
     else delete record.controlToken;
   }
 
+  async setBrowser(key: string, browser: BrowserWindow) {
+    const record = this.screens.get(key);
+    if (!record) return;
+    record.browser = browser;
+    await this.save();
+  }
+
   async remove(key: string) {
     if (this.screens.delete(key)) await this.save();
   }
@@ -135,10 +145,11 @@ export class ScreenRegistry {
 
   private async save() {
     await mkdir(path.dirname(this.file), { recursive: true, mode: 0o700 });
-    const screens = this.list().map(({ key, slot, viewToken, lastUsedAt }) => ({
+    const screens = this.list().map(({ key, slot, viewToken, browser, lastUsedAt }) => ({
       key,
       slot,
       viewToken,
+      ...(browser ? { browser } : {}),
       lastUsedAt,
     }));
     const temporary = `${this.file}.${process.pid}.tmp`;
