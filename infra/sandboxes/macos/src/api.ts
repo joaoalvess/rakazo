@@ -3,6 +3,7 @@ import { type Context, Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod";
 import type { ComputerAction, Point } from "./actions.js";
+import type { PageBrowserCommand } from "./page-browser.js";
 import type { ScreenRecord, ScreenRegistry } from "./screens.js";
 
 export interface Observation {
@@ -21,6 +22,7 @@ export interface ScreenService {
   revokeControl(record: ScreenRecord): Promise<void>;
   observe(key: string): Promise<Observation>;
   act(key: string, actions: ComputerAction[]): Promise<number>;
+  browser(key: string, command: PageBrowserCommand, signal?: AbortSignal): Promise<unknown>;
 }
 
 const pointerSchema = z.object({
@@ -65,6 +67,45 @@ const inputSchema = z.object({
   }),
   leaseId: z.string().optional(),
 });
+
+const browserSchema = z.discriminatedUnion("command", [
+  z.object({
+    command: z.literal("navigate"),
+    url: z
+      .string()
+      .url()
+      .max(8192)
+      .refine((value) => {
+        if (!URL.canParse(value)) return false;
+        const url = new URL(value);
+        return /^https?:$/.test(url.protocol) && !url.username && !url.password;
+      }),
+  }),
+  z.object({ command: z.literal("snapshot") }),
+  z.object({
+    command: z.literal("act"),
+    actions: z
+      .array(
+        z.discriminatedUnion("kind", [
+          z.object({ kind: z.literal("click"), ref: z.string().min(1).max(200) }),
+          z.object({
+            kind: z.literal("upload"),
+            ref: z.string().min(1).max(200),
+            paths: z.array(z.string().min(1).max(1024)).min(1).max(10),
+            roots: z.array(z.string().min(1).max(1024)).max(2).optional(),
+          }),
+          z.object({
+            kind: z.enum(["fill", "type"]),
+            ref: z.string().min(1).max(200),
+            text: z.string().max(32_000),
+            origin: z.string().url().max(2048).optional(),
+          }),
+        ]),
+      )
+      .min(1)
+      .max(24),
+  }),
+]);
 
 function inputAction(input: z.infer<typeof inputSchema>["input"]): ComputerAction {
   if (input.kind === "key")
@@ -173,6 +214,26 @@ export function createApi(service: ScreenService, supervisorToken: string) {
       return c.json({ completed, observation: await service.observe(key) });
     } catch (error) {
       return c.json({ error: errorMessage(error) }, 500);
+    }
+  });
+
+  app.post("/computers/:id/browser", async (c) => {
+    const parsed = browserSchema.safeParse(await c.req.json().catch(() => undefined));
+    if (!parsed.success) return c.json({ error: "invalid browser command" }, 400);
+    const body = parsed.data;
+    try {
+      return c.json(await service.browser(screenKey(c, c.req.param("id")), body, c.req.raw.signal));
+    } catch (error) {
+      const detail = errorMessage(error);
+      return c.json({
+        ok: false,
+        fallback: "computer_act",
+        uncertain: body.command === "act",
+        error:
+          detail && detail !== "Page browser unavailable or interrupted"
+            ? detail
+            : "Page browser unavailable or interrupted. Inspect the screen before continuing.",
+      });
     }
   });
 

@@ -14,6 +14,7 @@ import { DisplaydClient, type Rect } from "./displayd.js";
 import { CuaDriver } from "./driver.js";
 import { ScreenFeeds } from "./feed.js";
 import { ControlInput } from "./input.js";
+import { PageBrowser } from "./page-browser.js";
 import {
   resolveScreenLimit,
   SCREEN_HEIGHT,
@@ -46,7 +47,19 @@ export async function startMacScreens() {
     process.env.MAC_SCREENS_DISPLAYD_DIR ??
       path.join(homedir(), "Library", "Application Support", "Rakazo", "displayd"),
   );
-  const chrome = new Chrome(`http://127.0.0.1:${process.env.MAC_SCREENS_CHROME_PORT ?? 9333}`);
+  const chromePort = process.env.MAC_SCREENS_CHROME_PORT ?? "9333";
+  const chrome = new Chrome(`http://127.0.0.1:${chromePort}`);
+  const pageBrowser = new PageBrowser(
+    path.join(repositoryRoot, "infra", "sandboxes", "computer", "rakazo-page-browser"),
+    {
+      HOME: homedir(),
+      PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
+      RAKAZO_CDP_PORT: chromePort,
+      ...(process.env.RAKAZO_BROWSER_UPLOAD_MAX_BYTES !== undefined
+        ? { RAKAZO_BROWSER_UPLOAD_MAX_BYTES: process.env.RAKAZO_BROWSER_UPLOAD_MAX_BYTES }
+        : {}),
+    },
+  );
   const driver = new CuaDriver(process.env.MAC_SCREENS_CUA_DRIVER ?? "cua-driver");
   const registry = new ScreenRegistry(path.join(stateDir, "state.json"), resolveScreenLimit());
   await registry.load();
@@ -191,6 +204,13 @@ export async function startMacScreens() {
     },
     async act(key, actions) {
       return computer(await openScreen(key)).act(actions);
+    },
+    async browser(key, command, signal) {
+      return computer(await openScreen(key)).usePage(() => {
+        const window = registry.get(key)?.browser;
+        if (!window) throw new Error("the bot's browser window is not available");
+        return pageBrowser.run(command, window.windowId, signal);
+      });
     },
     async revokeControl(record) {
       registry.setControl(record.key, undefined);

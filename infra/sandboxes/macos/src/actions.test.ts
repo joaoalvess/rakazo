@@ -260,6 +260,27 @@ describe("BotComputer", () => {
     ]);
   });
 
+  it("shows and raises the bot's Chrome window before the page browser runs", async () => {
+    const cover = { ...editor, bounds: { x: 1280, y: 30, width: 1280, height: 770 } };
+    const { bot, act, driver } = computer({ windows: [cover, chromeWindow] });
+    const order: string[] = [];
+    const typing = act({ kind: "clipboard", text: "oi" }).then(() => order.push("typed"));
+    const snapshot = await bot.usePage(async () => {
+      order.push("page");
+      return { ok: true };
+    });
+    await typing;
+    expect(snapshot).toEqual({ ok: true });
+    expect(order).toEqual(["typed", "page"]);
+    expect(driver.slice(-2)).toEqual([
+      ["browser", { visible: true }],
+      ["raise", { pid: 42, window: 1924 }],
+    ]);
+    await expect(computer({ page: false }).bot.usePage(async () => "never")).rejects.toThrow(
+      "the bot's browser window is not available",
+    );
+  });
+
   it("launches native apps onto the bot's screen and types into them", async () => {
     const other = { x: 2560, y: 0, width: 1280, height: 800 };
     const { act, driver } = computer({

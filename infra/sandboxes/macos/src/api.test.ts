@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { ComputerAction } from "./actions.js";
 import { createApi, type ScreenService } from "./api.js";
+import type { PageBrowserCommand } from "./page-browser.js";
 import { type ScreenRecord, ScreenRegistry } from "./screens.js";
 
 const token = "t".repeat(32);
@@ -12,6 +13,7 @@ let registry: ScreenRegistry;
 let opened: string[];
 let revoked: ScreenRecord[];
 let acted: Array<[string, ComputerAction[]]>;
+let browsed: Array<[string, PageBrowserCommand]>;
 let failure: Error | undefined;
 let app: ReturnType<typeof createApi>;
 
@@ -21,6 +23,7 @@ beforeEach(async () => {
   opened = [];
   revoked = [];
   acted = [];
+  browsed = [];
   failure = undefined;
   const service: ScreenService = {
     registry,
@@ -46,6 +49,11 @@ beforeEach(async () => {
       if (failure) throw failure;
       acted.push([key, actions]);
       return actions.length;
+    },
+    async browser(key, command) {
+      if (failure) throw failure;
+      browsed.push([key, command]);
+      return { ok: true, url: "https://example.com/" };
     },
   };
   app = createApi(service, token);
@@ -195,6 +203,49 @@ describe("macOS screens API", () => {
     expect(failed.status).toBe(500);
     expect(await failed.json()).toEqual({
       error: "cua-driver click failed: window_target_not_found",
+    });
+  });
+
+  it("runs page browser commands on the bot's screen", async () => {
+    const response = await request("POST", "/computers/c1/browser", { command: "snapshot" });
+    expect(await response.json()).toEqual({ ok: true, url: "https://example.com/" });
+    const fill = {
+      command: "act",
+      actions: [{ kind: "fill", ref: "e1", text: "x", origin: "https://login.example.com" }],
+    };
+    await request("POST", "/computers/c1/browser", fill);
+    expect(browsed).toEqual([
+      ["bot-a", { command: "snapshot" }],
+      ["bot-a", fill],
+    ]);
+    for (const invalid of [
+      { command: "navigate", url: "file:///etc/hosts" },
+      { command: "navigate", url: "https://user:secret@example.com" },
+      { command: "act", actions: [] },
+    ]) {
+      expect((await request("POST", "/computers/c1/browser", invalid)).status).toBe(400);
+    }
+  });
+
+  it("answers page browser failures with the computer_act fallback", async () => {
+    failure = new Error("Page browser unavailable or interrupted");
+    const act = await request("POST", "/computers/c1/browser", {
+      command: "act",
+      actions: [{ kind: "click", ref: "e1" }],
+    });
+    expect(await act.json()).toEqual({
+      ok: false,
+      fallback: "computer_act",
+      uncertain: true,
+      error: "Page browser unavailable or interrupted. Inspect the screen before continuing.",
+    });
+    failure = new Error("the bot's browser window is not available");
+    const snapshot = await request("POST", "/computers/c1/browser", { command: "snapshot" });
+    expect(await snapshot.json()).toEqual({
+      ok: false,
+      fallback: "computer_act",
+      uncertain: false,
+      error: "the bot's browser window is not available",
     });
   });
 

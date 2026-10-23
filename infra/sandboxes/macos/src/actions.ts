@@ -157,9 +157,14 @@ export class BotComputer {
   }
 
   act(actions: ComputerAction[]): Promise<number> {
-    const run = this.queue.then(() => this.run(actions));
-    this.queue = run.catch(() => undefined);
-    return run;
+    return this.enqueue(() => this.run(actions));
+  }
+
+  usePage<T>(work: () => Promise<T>): Promise<T> {
+    return this.enqueue(async () => {
+      await this.browse();
+      return work();
+    });
   }
 
   async activeWindow() {
@@ -175,6 +180,12 @@ export class BotComputer {
     }
     window ??= windows[0];
     return window && { id: String(window.id), ...(window.title ? { title: window.title } : {}) };
+  }
+
+  private enqueue<T>(work: () => Promise<T>) {
+    const run = this.queue.then(work);
+    this.queue = run.catch(() => undefined);
+    return run;
   }
 
   private async run(actions: ComputerAction[]) {
