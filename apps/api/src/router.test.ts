@@ -2790,6 +2790,7 @@ describe("computer terminal and file transfer", () => {
 
   function setup(computer: Record<string, unknown> = {}, maxUploadSizeBytes?: number) {
     const sandbox = {
+      describe: () => ({ id: "docker", capabilities: { graphical: true } }),
       execute: vi.fn(async function* () {
         yield { type: "exit" as const, code: 0 };
       }),
