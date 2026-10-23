@@ -27,6 +27,10 @@ export class ScreenLifecycle {
     return this.asleep.has(key);
   }
 
+  markAsleep(key: string) {
+    this.asleep.add(key);
+  }
+
   start(everyMs = SWEEP_EVERY_MS) {
     this.timer ??= setInterval(() => void this.sweep(), everyMs);
     this.timer.unref();

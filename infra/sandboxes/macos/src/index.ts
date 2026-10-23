@@ -202,6 +202,15 @@ export async function startMacScreens() {
     onError: (record, error) =>
       logger.warn("screen failed to sleep", { screen: record.key, reason: error.message }),
   });
+  const asleepSlots = await displayd
+    .call({ op: "status" })
+    .then(({ screens }) =>
+      (screens ?? []).filter((screen) => !screen.awake).map((screen) => screen.slot),
+    )
+    .catch((): number[] => []);
+  for (const record of registry.list()) {
+    if (asleepSlots.includes(record.slot)) lifecycle.markAsleep(record.key);
+  }
   lifecycle.start();
 
   const closeScreen = async (record: ScreenRecord) => {

@@ -119,6 +119,18 @@ describe("ScreenLifecycle", () => {
     expect(calls).toEqual(["sleep bot-a", "wake bot-a"]);
   });
 
+  it("wakes a screen marked asleep when the supervisor started", async () => {
+    const screens = [record("bot-a", 0)];
+    const { subject, calls, at } = lifecycle(screens);
+    subject.markAsleep("bot-a");
+    at(SLEEP_AFTER_MS);
+    await subject.sweep();
+    expect(subject.isAsleep("bot-a")).toBe(true);
+    await subject.wake("bot-a");
+    expect(calls).toEqual(["wake bot-a"]);
+    expect(subject.isAsleep("bot-a")).toBe(false);
+  });
+
   it("forgets a closed screen", async () => {
     const screens = [record("bot-a", 0)];
     const { subject, calls, at } = lifecycle(screens);
