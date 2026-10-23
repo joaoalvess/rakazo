@@ -50,11 +50,11 @@ export class Chrome {
     display: Rect,
     show = false,
   ): Promise<BrowserWindow> {
-    const { cdp, browserId } = await this.connect();
+    const { cdp, browserId, pid } = await this.connect();
     let windowId = window?.browserId === browserId ? window.windowId : undefined;
     let bounds = windowId === undefined ? undefined : await this.bounds(cdp, windowId);
-    if (show && bounds?.windowState === "minimized") {
-      await cdp.send("Browser.setWindowBounds", { windowId, bounds: { windowState: "normal" } });
+    if (show && bounds && !(await this.visiblePage(cdp, windowId!, pid))) {
+      await this.restore(cdp, windowId!, pid);
       bounds = await this.bounds(cdp, windowId!);
     }
     if (!bounds) {
@@ -96,11 +96,7 @@ export class Chrome {
   async pageView(window: BrowserWindow): Promise<PageView | undefined> {
     const { cdp, browserId, pid } = await this.connect();
     if (window.browserId !== browserId) return undefined;
-    for (const page of await this.pagesIn(cdp, window.windowId)) {
-      const view = await this.view(cdp, page, pid).catch(() => undefined);
-      if (view) return view;
-    }
-    return undefined;
+    return this.visiblePage(cdp, window.windowId, pid);
   }
 
   async closeWindow(window: BrowserWindow) {
@@ -116,6 +112,22 @@ export class Chrome {
       ({ cdp }) => cdp.close(),
       () => undefined,
     );
+  }
+
+  private async restore(cdp: CdpConnection, windowId: number, pid: number) {
+    await cdp.send("Browser.setWindowBounds", { windowId, bounds: { windowState: "normal" } });
+    for (let attempt = 1; attempt < PLACE_ATTEMPTS; attempt++) {
+      if (await this.visiblePage(cdp, windowId, pid)) return;
+      await new Promise((resolve) => setTimeout(resolve, PLACE_RETRY_MS));
+    }
+  }
+
+  private async visiblePage(cdp: CdpConnection, windowId: number, pid: number) {
+    for (const page of await this.pagesIn(cdp, windowId)) {
+      const view = await this.view(cdp, page, pid).catch(() => undefined);
+      if (view) return view;
+    }
+    return undefined;
   }
 
   private async pagesIn(cdp: CdpConnection, windowId: number) {

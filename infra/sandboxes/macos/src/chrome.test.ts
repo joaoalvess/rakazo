@@ -29,6 +29,7 @@ let windows: Map<number, FakeWindow>;
 let calls: string[];
 let nextWindow: number;
 let offscreenMoves: number;
+let minimized: Set<number>;
 
 function handle(method: string, params: Record<string, unknown>, sessionId?: string) {
   calls.push(method);
@@ -53,7 +54,11 @@ function handle(method: string, params: Record<string, unknown>, sessionId?: str
     case "Browser.setWindowBounds": {
       const window = windows.get(params.windowId as number)!;
       const bounds = params.bounds as Partial<FakeWindow> & { windowState?: string };
-      if (bounds.left !== undefined && offscreenMoves > 0) {
+      if (bounds.windowState === "minimized") {
+        minimized.add(params.windowId as number);
+      } else if (minimized.delete(params.windowId as number)) {
+        if (bounds.windowState !== "normal") Object.assign(window, bounds);
+      } else if (bounds.left !== undefined && offscreenMoves > 0) {
         offscreenMoves--;
         Object.assign(window, { ...bounds, left: 0 });
       } else if (bounds.windowState === "maximized") {
@@ -79,7 +84,7 @@ function handle(method: string, params: Record<string, unknown>, sessionId?: str
       return {
         result: {
           value: {
-            visible: target.visible,
+            visible: target.visible && !minimized.has(target.windowId),
             x: window.left,
             y: window.top,
             outerWidth: window.width,
@@ -113,6 +118,7 @@ beforeEach(async () => {
   calls = [];
   nextWindow = 1;
   offscreenMoves = 0;
+  minimized = new Set();
   sockets = new WebSocketServer({ noServer: true });
   server = http.createServer((_request, response) => {
     const { port } = server.address() as AddressInfo;
@@ -198,12 +204,15 @@ describe("Chrome", () => {
   it("leaves a hidden window minimized until it is shown again", async () => {
     const window = await chrome.placeWindow(undefined, display);
     await chrome.hideWindow(window);
-    expect(windows.get(1)?.windowState).toBe("minimized");
+    expect(minimized.has(1)).toBe(true);
+    expect(await chrome.pageView(window)).toBeUndefined();
     calls = [];
     await chrome.placeWindow(window, display);
     expect(calls).toEqual(["Browser.getWindowBounds"]);
     await chrome.placeWindow(window, display, true);
+    expect(minimized.has(1)).toBe(false);
     expect(windows.get(1)?.windowState).toBe("maximized");
+    expect(await chrome.pageView(window)).toBeDefined();
   });
 
   it("opens a new window when the window is gone or Chrome restarted", async () => {
