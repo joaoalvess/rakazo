@@ -1289,6 +1289,7 @@ msgstr "Computer konnte nicht gestartet werden"
 msgid "Computer is asleep"
 msgstr "Computer ist im Ruhezustand"
 
+#: src/pages/shell/computer-panel.tsx
 #: src/pages/shell/computer-view.tsx
 msgid "Computer is asleep. Open it to wake."
 msgstr ""

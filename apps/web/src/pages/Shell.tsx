@@ -641,6 +641,7 @@ function SpaceShell() {
   }, [panel, releaseComputerRecovery]);
   useEffect(() => () => window.clearTimeout(recoveryHoldTimer.current), []);
   const [screenUrl, setScreenUrl] = useState<string | null>(null);
+  const [asleepScreenUrl, setAsleepScreenUrl] = useState<string | null>(null);
   const [computerOpen, setComputerOpen] = useState(false);
   const [computerBotId, setComputerBotId] = useState<string | undefined>();
   const computerOpenRef = useRef(false);
@@ -1149,6 +1150,7 @@ function SpaceShell() {
         computerVisible.current,
       commit: (screen) => {
         setScreenUrl(screen.url);
+        setAsleepScreenUrl(screen.asleep ? screen.url : null);
         // A screen read replaces only its own error; a failed boot keeps its error and Retry.
         if (screen.error || computerErrorFromScreenRef.current) {
           setComputerError(screen.error);
@@ -3693,6 +3695,7 @@ function SpaceShell() {
                 computer={computer}
                 computerOpen={computerOpen}
                 embeddedScreenUrl={embeddedScreenUrl}
+                screenAsleep={screenUrl !== null && screenUrl === asleepScreenUrl}
                 screenFrameRef={setScreenFrame}
                 computerScreenError={computerScreenError}
                 computerBooting={computerBooting}

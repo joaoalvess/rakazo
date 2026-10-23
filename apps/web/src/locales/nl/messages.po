@@ -1289,6 +1289,7 @@ msgstr "De computer kon niet opstarten"
 msgid "Computer is asleep"
 msgstr "De computer is in slaapstand"
 
+#: src/pages/shell/computer-panel.tsx
 #: src/pages/shell/computer-view.tsx
 msgid "Computer is asleep. Open it to wake."
 msgstr "De computer is in slaapstand. Open hem om hem te laten ontwaken."

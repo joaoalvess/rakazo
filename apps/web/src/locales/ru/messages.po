@@ -1289,6 +1289,7 @@ msgstr "Компьютер не смог загрузиться"
 msgid "Computer is asleep"
 msgstr "Компьютер спит"
 
+#: src/pages/shell/computer-panel.tsx
 #: src/pages/shell/computer-view.tsx
 msgid "Computer is asleep. Open it to wake."
 msgstr "Компьютер спит. Откройте его, чтобы разбудить."

@@ -1289,6 +1289,7 @@ msgstr "कंप्यूटर शुरू नहीं हो सका"
 msgid "Computer is asleep"
 msgstr "कंप्यूटर निष्क्रिय है"
 
+#: src/pages/shell/computer-panel.tsx
 #: src/pages/shell/computer-view.tsx
 msgid "Computer is asleep. Open it to wake."
 msgstr ""

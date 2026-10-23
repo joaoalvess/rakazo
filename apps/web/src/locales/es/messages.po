@@ -1289,6 +1289,7 @@ msgstr "La computadora no pudo iniciarse"
 msgid "Computer is asleep"
 msgstr "La computadora está en reposo"
 
+#: src/pages/shell/computer-panel.tsx
 #: src/pages/shell/computer-view.tsx
 msgid "Computer is asleep. Open it to wake."
 msgstr "La computadora está en reposo. Ábrela para despertarla."

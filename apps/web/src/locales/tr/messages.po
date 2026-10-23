@@ -1289,6 +1289,7 @@ msgstr "Bilgisayar başlatılamadı"
 msgid "Computer is asleep"
 msgstr "Bilgisayar uykuda"
 
+#: src/pages/shell/computer-panel.tsx
 #: src/pages/shell/computer-view.tsx
 msgid "Computer is asleep. Open it to wake."
 msgstr ""

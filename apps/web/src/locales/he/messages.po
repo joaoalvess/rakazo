@@ -1289,6 +1289,7 @@ msgstr "הפעלת המחשב נכשלה"
 msgid "Computer is asleep"
 msgstr "המחשב במצב שינה"
 
+#: src/pages/shell/computer-panel.tsx
 #: src/pages/shell/computer-view.tsx
 msgid "Computer is asleep. Open it to wake."
 msgstr "המחשב במצב שינה. יש לפתוח אותו כדי להעיר אותו."

@@ -3,11 +3,12 @@ import { errorText } from "./user-error";
 export interface ComputerScreenResult {
   url: string | null;
   error: string | null;
+  asleep?: boolean;
 }
 
 /** Only the latest request for the visible computer may replace its screen or error. */
 export async function loadComputerScreen(options: {
-  load: () => Promise<{ url: string | null }>;
+  load: () => Promise<{ url: string | null; asleep?: boolean }>;
   isCurrent: () => boolean;
   commit: (result: ComputerScreenResult) => void;
   fallbackError: string;
@@ -15,7 +16,7 @@ export async function loadComputerScreen(options: {
   let result: ComputerScreenResult;
   try {
     const screen = await options.load();
-    result = { url: screen.url, error: null };
+    result = { url: screen.url, error: null, ...(screen.asleep ? { asleep: true } : {}) };
   } catch (error) {
     result = {
       url: null,

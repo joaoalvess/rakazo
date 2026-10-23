@@ -78,6 +78,21 @@ describe("computer screen requests", () => {
     },
   );
 
+  it("keeps the asleep flag of a sleeping screen", async () => {
+    const commit = vi.fn();
+    await loadComputerScreen({
+      load: async () => ({ url: "https://screen.example/vnc.html", asleep: true }),
+      isCurrent: () => true,
+      commit,
+      fallbackError: "Could not connect",
+    });
+    expect(commit).toHaveBeenCalledExactlyOnceWith({
+      url: "https://screen.example/vnc.html",
+      error: null,
+      asleep: true,
+    });
+  });
+
   it("uses the visible fallback for errors without a message", async () => {
     const commit = vi.fn();
     await loadComputerScreen({

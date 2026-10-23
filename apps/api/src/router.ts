@@ -2891,6 +2891,12 @@ export function createRouter(deps: RouterDeps) {
               bot.id,
               computerContext(context.actor, bot.id, "boot"),
             );
+            await deps.sandbox
+              .wakeScreen?.(
+                toComputerRef(bot.computer),
+                computerContext(context.actor, bot.id, "boot"),
+              )
+              .catch(() => undefined);
             scheduleComputerSleep(deps.jobs, bot.computer.id);
             return computerStatus(deps, context.actor, input.botId);
           } catch (error) {
@@ -3542,6 +3548,7 @@ export function createRouter(deps: RouterDeps) {
             computerGeneration: computer.screenGeneration,
             controlLeaseId: computer.controlLeaseId,
           }),
+          ...(session.asleep ? { asleep: true } : {}),
         };
       }),
       heartbeat: authed.computer.heartbeat.handler(async ({ context, input }) => {

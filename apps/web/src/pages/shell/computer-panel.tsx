@@ -13,6 +13,7 @@ type ComputerPanelProps = {
   computer: ComputerStatus | null;
   computerOpen: boolean;
   embeddedScreenUrl: string | null;
+  screenAsleep: boolean;
   screenFrameRef: (frame: HTMLIFrameElement | null) => void;
   computerScreenError: ReactNode;
   computerBooting: ReactNode;
@@ -36,6 +37,7 @@ export function ComputerPanel({
   computer,
   computerOpen,
   embeddedScreenUrl,
+  screenAsleep,
   screenFrameRef,
   computerScreenError,
   computerBooting,
@@ -68,15 +70,25 @@ export function ComputerPanel({
         ) : computer?.graphical === false ? (
           <DesktopKindEmptyState className="grid h-full place-items-center px-6 text-center text-sm text-muted-foreground/80" />
         ) : computer?.state === "running" && embeddedScreenUrl && !computerScreenError ? (
-          <iframe
-            title={t`Bot screen preview`}
-            ref={screenFrameRef}
-            src={embeddedScreenUrl}
-            sandbox={screenIframeSandbox(embeddedScreenUrl)}
-            className="h-full w-full border-0 bg-black"
-            allow="clipboard-read; clipboard-write"
-            style={{ pointerEvents: "none" }}
-          />
+          <>
+            <iframe
+              title={t`Bot screen preview`}
+              ref={screenFrameRef}
+              src={embeddedScreenUrl}
+              sandbox={screenIframeSandbox(embeddedScreenUrl)}
+              className="h-full w-full border-0 bg-black"
+              allow="clipboard-read; clipboard-write"
+              style={{ pointerEvents: "none" }}
+            />
+            {screenAsleep ? (
+              <div
+                data-testid="computer-asleep"
+                className="absolute inset-0 grid place-items-center bg-overlay/60 px-6 text-center text-sm text-foreground"
+              >
+                {t`Computer is asleep. Open it to wake.`}
+              </div>
+            ) : null}
+          </>
         ) : (
           <div className="grid h-full place-items-center px-6 text-center text-sm text-muted-foreground/80">
             {computerScreenError ??

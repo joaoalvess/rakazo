@@ -1289,6 +1289,7 @@ msgstr "Falha ao inicializar o computador"
 msgid "Computer is asleep"
 msgstr "O computador está dormindo"
 
+#: src/pages/shell/computer-panel.tsx
 #: src/pages/shell/computer-view.tsx
 msgid "Computer is asleep. Open it to wake."
 msgstr ""

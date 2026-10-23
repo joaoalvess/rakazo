@@ -1289,6 +1289,7 @@ msgstr "电脑启动失败"
 msgid "Computer is asleep"
 msgstr "电脑已休眠"
 
+#: src/pages/shell/computer-panel.tsx
 #: src/pages/shell/computer-view.tsx
 msgid "Computer is asleep. Open it to wake."
 msgstr ""

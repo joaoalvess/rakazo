@@ -2725,6 +2725,18 @@ describe("computer screen url", () => {
     });
   });
 
+  it("says when the bot's screen is asleep", async () => {
+    const asleep = await callScreenUrl(async () => ({
+      url: "https://screen.example/vnc.html?token=fake-token",
+      asleep: true,
+    }));
+    expect((await asleep.response.json()).json).toMatchObject({ asleep: true });
+    const awake = await callScreenUrl(async () => ({
+      url: "https://screen.example/vnc.html?token=fake-token",
+    }));
+    expect((await awake.response.json()).json).not.toHaveProperty("asleep");
+  });
+
   it("returns desktop provider screen URLs without sealing them", async () => {
     const { response } = await callScreenUrl(async () => ({
       url: "desktop://screen/computer-1",
@@ -2890,6 +2902,19 @@ describe("computer terminal and file transfer", () => {
       { argv: ["mkdir", "-p", "shared", "bots/bot-1"] },
       expect.anything(),
     );
+  });
+
+  it("wakes the bot's screen when boot reuses a running computer", async () => {
+    const { sandbox, call } = setup();
+    const wakeScreen = vi.fn().mockResolvedValue(undefined);
+    Object.assign(sandbox, { wakeScreen });
+    await expect(call("boot", {})).resolves.toMatchObject({ status: 200 });
+    expect(wakeScreen).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "sandbox-ref-1" }),
+      expect.objectContaining({ botId: "bot-1" }),
+    );
+    wakeScreen.mockRejectedValueOnce(new Error("computer screen wake failed: 500"));
+    await expect(call("boot", {})).resolves.toMatchObject({ status: 200 });
   });
 
   it("clears a reclaimed sandbox before boot attempts provisioning again", async () => {

@@ -1289,6 +1289,7 @@ msgstr "Échec du démarrage de l'ordinateur"
 msgid "Computer is asleep"
 msgstr "L'ordinateur est en veille"
 
+#: src/pages/shell/computer-panel.tsx
 #: src/pages/shell/computer-view.tsx
 msgid "Computer is asleep. Open it to wake."
 msgstr "L'ordinateur est en veille. Ouvrez-le pour le réveiller."
