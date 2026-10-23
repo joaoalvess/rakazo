@@ -31,6 +31,7 @@ async function runRoutine(
     takeover?: boolean;
     native?: boolean;
     nativeUnavailable?: boolean;
+    screens?: boolean;
     toolFailure?: "abort" | "recover";
     attachments?: "file" | "image";
     steering?: boolean;
@@ -172,7 +173,7 @@ async function runRoutine(
     deploymentSettings: {
       findUnique: vi.fn(async () => ({
         defaultModelProvider: "openrouter",
-        defaultModelId: "deepseek/deepseek-v4-flash-0731",
+        defaultModelId: options.screens ? "openai/gpt-4o" : "deepseek/deepseek-v4-flash-0731",
       })),
     },
     taughtSkill: { findMany: vi.fn(async () => []) },
@@ -198,7 +199,11 @@ async function runRoutine(
     },
   };
   const sandbox = {
-    describe: () => ({ id: "e2b", capabilities: { graphical: false } }),
+    describe: () =>
+      options.screens
+        ? { id: "desktop", capabilities: { graphical: true } }
+        : { id: "e2b", capabilities: { graphical: false } },
+    pageBrowser: options.screens ? vi.fn() : undefined,
     environment: options.native
       ? vi.fn(async () => {
           if (options.nativeUnavailable) throw new Error("native app is closed");
@@ -398,6 +403,22 @@ describe("run computer provisioning", () => {
         expect.objectContaining({ kind: "desktop", botId: "home-1" }),
         expect.anything(),
       );
+    },
+  );
+
+  it.each([false, true])(
+    "offers screen and page tools to a native computer only with macOS screens: %s",
+    async (screens) => {
+      const { runtimeRun } = await runRoutine([], { native: true, screens });
+      const request = runtimeRun.mock.calls[0]![0];
+      const tools = request.tools.map((tool) => tool.name);
+      const screenTools = ["computer_observe", "computer_act", "browser_navigate", "browser_act"];
+      if (screens) expect(tools).toEqual(expect.arrayContaining(screenTools));
+      else for (const name of screenTools) expect(tools).not.toContain(name);
+      expect(request.instructions.includes("graphical screen control is unavailable")).toBe(
+        !screens,
+      );
+      expect(request.instructions.includes("Use computer_observe and computer_act")).toBe(screens);
     },
   );
 

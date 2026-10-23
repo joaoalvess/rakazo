@@ -4204,8 +4204,13 @@ export function createRunExecutor(deps: ExecutorDeps) {
         ]
           .filter(Boolean)
           .join("\n\n");
-        const graphical =
-          computerKind !== "desktop" && deps.sandbox.describe().capabilities.graphical;
+        const sandboxDescription = deps.sandbox.describe();
+        const graphical = computerKind !== "desktop" && sandboxDescription.capabilities.graphical;
+        const screenTools =
+          graphical ||
+          (computerKind === "desktop" &&
+            sandboxDescription.id === "desktop" &&
+            sandboxDescription.capabilities.graphical);
         // Gate on the model this run will actually call — the pair written to the run row
         // above. Deriving it a second time here dropped the deployment fallback, so a
         // vision-capable default was gated as "scripted" and lost its screenshot tools.
@@ -4257,9 +4262,9 @@ export function createRunExecutor(deps: ExecutorDeps) {
         const callEndRun = run.trigger === "call_end";
         const callClientNonceForRun = callEndRun ? run.clientNonce : sourceClientNonce;
         const voiceCall = callEndRun || isCallClientNonce(sourceClientNonce);
-        const graphicalToolsAllowed = graphical && acceptsImages && !heldForTakeover;
+        const graphicalToolsAllowed = screenTools && acceptsImages && !heldForTakeover;
         const pageBrowserAllowed =
-          graphical && browser.describe().capabilities.page && !heldForTakeover;
+          screenTools && browser.describe().capabilities.page && !heldForTakeover;
         const disabledBuiltinTools = disabledBuiltinToolSet(bot.disabledBuiltinTools);
         const builtins = [
           ...selectBuiltinToolsForRun({
@@ -4446,7 +4451,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
         const baseComputerInstruction = persistentComputerInstruction({
           heldForTakeover,
           graphicalToolsAllowed,
-          graphical,
+          graphical: screenTools,
           disabled: disabledBuiltinTools,
         });
         const dockerToolInstruction = dockerComputerToolInstruction(
@@ -4471,7 +4476,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
                 .catch(() => undefined)
             : undefined;
         const hostInstruction = hostEnvironment
-          ? `Commands run on the user's ${hostEnvironment.platform} computer with their account permissions. Home: ${JSON.stringify(hostEnvironment.home)}. Shell: ${JSON.stringify(hostEnvironment.shell)}. The shell tool executes commands with that shell. Use its native syntax, paths and installed tools; do not assume Linux or bash. Local files outside the bot workspace can be accessed through commands. App launching is available through OS commands; graphical screen control is unavailable.`
+          ? `Commands run on the user's ${hostEnvironment.platform} computer with their account permissions. Home: ${JSON.stringify(hostEnvironment.home)}. Shell: ${JSON.stringify(hostEnvironment.shell)}. The shell tool executes commands with that shell. Use its native syntax, paths and installed tools; do not assume Linux or bash. Local files outside the bot workspace can be accessed through commands.${screenTools ? "" : " App launching is available through OS commands; graphical screen control is unavailable."}`
           : undefined;
         const computerInstruction = [
           "Use the computer only when the task needs files, commands, a browser, or an installed application. Answer directly from the conversation when sufficient; use connected tools for app data. Do not inspect the computer just to prepare for an unrelated task.",
