@@ -33,6 +33,25 @@ func isSessionLocked() -> Bool {
   return session["CGSSessionScreenIsLocked"] as? Bool ?? false
 }
 
+func onScreenWindows() -> [WindowInfo] {
+  let entries = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
+  return entries.compactMap { entry in
+    guard
+      let pid = entry[kCGWindowOwnerPID as String] as? Int,
+      let layer = entry[kCGWindowLayer as String] as? Int,
+      let dictionary = entry[kCGWindowBounds as String] as? NSDictionary,
+      let bounds = CGRect(dictionaryRepresentation: dictionary as CFDictionary),
+      (entry[kCGWindowAlpha as String] as? Double ?? 1) > 0
+    else { return nil }
+    return WindowInfo(
+      owner: entry[kCGWindowOwnerName as String] as? String ?? "",
+      pid: pid,
+      layer: layer,
+      bounds: .enclosing(x: bounds.minX, y: bounds.minY, width: bounds.width, height: bounds.height)
+    )
+  }
+}
+
 func nsScreen(for id: CGDirectDisplayID) -> NSScreen? {
   NSScreen.screens.first { ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value == id }
 }

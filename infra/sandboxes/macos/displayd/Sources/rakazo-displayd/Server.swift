@@ -102,6 +102,12 @@ final class Server {
           input.begin(slot)
         }
         reply(Response())
+      case .windows:
+        let slot = try slot(request)
+        guard let displayID = displays.displayID(slot) else { throw DisplaydError.notOpen(slot) }
+        let bounds = CGDisplayBounds(displayID)
+        let display = Rect.enclosing(x: bounds.minX, y: bounds.minY, width: bounds.width, height: bounds.height)
+        reply(Response(windows: WindowStack.onDisplay(onScreenWindows(), display: display, excludingPID: Int(getpid()))))
       case .screenshot:
         let slot = try activate(request)
         guard let displayID = displays.displayID(slot) else { throw DisplaydError.notOpen(slot) }

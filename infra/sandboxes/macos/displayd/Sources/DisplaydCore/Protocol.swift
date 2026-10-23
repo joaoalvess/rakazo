@@ -1,7 +1,7 @@
 import Foundation
 
 public enum Operation: String, Decodable, Sendable {
-  case status, permissions, open, close, wake, sleep, screenshot, overlay, input, takeover
+  case status, permissions, open, close, wake, sleep, screenshot, overlay, input, takeover, windows
 }
 
 public enum ImageFormat: String, Decodable, Sendable {
@@ -102,6 +102,7 @@ public struct Response: Encodable, Sendable {
   public var permissions: Permissions?
   public var image: String?
   public var mimeType: String?
+  public var windows: [WindowInfo]?
 
   public init(
     id: Int? = nil,
@@ -111,7 +112,8 @@ public struct Response: Encodable, Sendable {
     screen: ScreenInfo? = nil,
     permissions: Permissions? = nil,
     image: String? = nil,
-    mimeType: String? = nil
+    mimeType: String? = nil,
+    windows: [WindowInfo]? = nil
   ) {
     self.id = id
     self.ok = ok
@@ -121,6 +123,7 @@ public struct Response: Encodable, Sendable {
     self.permissions = permissions
     self.image = image
     self.mimeType = mimeType
+    self.windows = windows
   }
 
   public static func failure(_ message: String, id: Int? = nil) -> Response {

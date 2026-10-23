@@ -36,6 +36,10 @@ public struct Rect: Codable, Equatable, Sendable {
     x <= other.maxX && other.x <= maxX && y <= other.maxY && other.y <= maxY
   }
 
+  public func intersects(_ other: Rect) -> Bool {
+    x < other.maxX && other.x < maxX && y < other.maxY && other.y < maxY
+  }
+
   public func union(_ other: Rect) -> Rect {
     let minX = min(x, other.x)
     let minY = min(y, other.y)
