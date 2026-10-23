@@ -314,6 +314,9 @@ class CdpClient:
 def attach_page(client: CdpClient) -> str:
     targets = client.call("Target.getTargets").get("targetInfos") or []
     pages = [t for t in targets if isinstance(t, dict) and t.get("type") == "page"]
+    window_id = os.environ.get("RAKAZO_CDP_WINDOW_ID")
+    if window_id:
+        pages = [page for page in pages if in_window(client, page["targetId"], window_id)]
     candidates = []
     for page in pages[:32]:
         attached = client.call("Target.attachToTarget", {
@@ -337,6 +340,14 @@ def attach_page(client: CdpClient) -> str:
         raise RuntimeError("No unambiguous visible browser tab. Use desktop tools to select a tab.")
     ensure_world(client, selected)
     return selected
+
+
+def in_window(client: CdpClient, target_id: str, window_id: str) -> bool:
+    try:
+        owner = client.call("Browser.getWindowForTarget", {"targetId": target_id})
+    except Exception:
+        return False
+    return str(owner.get("windowId")) == window_id
 
 
 def ensure_world(client: CdpClient, session_id: str) -> None:

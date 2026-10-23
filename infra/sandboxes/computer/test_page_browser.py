@@ -246,6 +246,29 @@ class PageBrowserTest(unittest.TestCase):
                                   "params": {"context": {"id": 42, "name": helper.WORLD_NAME, "auxData": aux}}})
             self.assertIsNone(client.find_world_context(helper.WORLD_NAME, "frame-1", "session-a"))
 
+    def test_attaches_only_to_tabs_of_the_screen_window(self):
+        client = helper.CdpClient("ws://127.0.0.1:9222/test")
+        windows = {"mine": 7, "other": 8, "gone": None}
+
+        def fake_call(method, params=None, *, session_id=None, timeout_s=30.0):
+            if method == "Target.getTargets":
+                return {"targetInfos": [{"targetId": target, "type": "page"} for target in windows]}
+            if method == "Browser.getWindowForTarget":
+                if windows[params["targetId"]] is None:
+                    raise RuntimeError("No target with given id found")
+                return {"windowId": windows[params["targetId"]]}
+            if method == "Target.attachToTarget":
+                return {"sessionId": f"session-{params['targetId']}"}
+            return {}
+
+        client.call = fake_call  # type: ignore[method-assign]
+        with patch.object(helper, "ensure_world"), patch.object(helper, "eval_json", return_value=True), \
+                patch.dict(os.environ, {"RAKAZO_CDP_WINDOW_ID": "7"}):
+            self.assertEqual(helper.attach_page(client), "session-mine")
+        with patch.object(helper, "ensure_world"), patch.object(helper, "eval_json", return_value=True):
+            with self.assertRaisesRegex(RuntimeError, "unambiguous"):
+                helper.attach_page(client)
+
     def test_ensure_world_creates_when_missing(self):
         client = helper.CdpClient("ws://127.0.0.1:9222/test")
 
