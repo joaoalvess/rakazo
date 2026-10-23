@@ -2,4 +2,5 @@ packages:
   - "apps/*"
   - "packages/*"
   - "infra/sandboxes/supervisor"
+  - "infra/sandboxes/macos"
   - "infra/updater"
