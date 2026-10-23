@@ -48,6 +48,7 @@ export function newToken() {
 
 export class ScreenRegistry {
   private readonly screens = new Map<string, ScreenRecord>();
+  private saving: Promise<void> = Promise.resolve();
 
   constructor(
     private readonly file: string,
@@ -143,7 +144,13 @@ export class ScreenRegistry {
     return undefined;
   }
 
-  private async save() {
+  private save() {
+    const write = this.saving.then(() => this.write());
+    this.saving = write.catch(() => undefined);
+    return write;
+  }
+
+  private async write() {
     await mkdir(path.dirname(this.file), { recursive: true, mode: 0o700 });
     const screens = this.list().map(({ key, slot, viewToken, browser, lastUsedAt }) => ({
       key,

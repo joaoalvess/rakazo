@@ -25,6 +25,13 @@ describe("ScreenRegistry", () => {
     expect(registry.get("bot-a")?.lastUsedAt).toBe(3);
   });
 
+  it("saves screens allocated at the same time", async () => {
+    const registry = new ScreenRegistry(file, 3);
+    await Promise.all(["bot-a", "bot-b", "bot-c"].map((key) => registry.allocate(key)));
+    const saved = JSON.parse(await readFile(file, "utf8")) as { screens: Array<{ key: string }> };
+    expect(saved.screens.map((screen) => screen.key).sort()).toEqual(["bot-a", "bot-b", "bot-c"]);
+  });
+
   it("evicts the least recently used screen without control at the limit", async () => {
     const registry = new ScreenRegistry(file, 2);
     await registry.allocate("bot-a", 1);
