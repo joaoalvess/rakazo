@@ -27,6 +27,7 @@ type ComputerOverlayProps = {
   teachBusy: boolean;
   hasControl: boolean;
   composerRunning: boolean;
+  step?: string;
   sending: boolean;
   booting: boolean;
   runStatus?: Run["status"];
@@ -52,6 +53,7 @@ export function ComputerOverlay({
   teachBusy,
   hasControl,
   composerRunning,
+  step,
   sending,
   booting,
   runStatus,
@@ -107,6 +109,15 @@ export function ComputerOverlay({
                   <Trans>You have control</Trans>
                 </span>
               )
+            ) : null}
+            {!recordingSkill && !hasControl && composerRunning && step ? (
+              <span
+                data-testid="computer-step"
+                className="min-w-0 truncate rounded-full bg-muted px-[11px] py-1 text-[13px] text-muted-foreground"
+                dir="auto"
+              >
+                {step}
+              </span>
             ) : null}
           </div>
           <div className="flex items-center gap-3">

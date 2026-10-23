@@ -148,6 +148,7 @@ import {
   screenFrameMessage,
   screenFrameStarted,
 } from "../lib/computer-screen";
+import { liveComputerStep } from "../lib/computer-step";
 import { connectedAppMarks } from "../lib/connected-apps";
 import { scheduleFocusPrompt } from "../lib/focus-prompt";
 import { localTimezone } from "../lib/local-timezone";
@@ -4152,6 +4153,7 @@ function SpaceShell() {
           teachBusy={teachBusy}
           hasControl={hasControl}
           composerRunning={composerRunning}
+          step={liveComputerStep(snapshot?.messages ?? [], computerBot.id)}
           sending={sending}
           booting={booting}
           runStatus={snapshot?.run?.status}
