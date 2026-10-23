@@ -100,6 +100,7 @@ export class DesktopSandboxProvider implements SandboxProvider {
   readonly pageBrowser?: SandboxProvider["pageBrowser"];
   readonly setScreenControl?: SandboxProvider["setScreenControl"];
   readonly releaseScreen?: SandboxProvider["releaseScreen"];
+  readonly wakeScreen?: SandboxProvider["wakeScreen"];
   private readonly processTrees = new Map<NativeProcessTree, { home: string; runId?: string }>();
   private processSweep?: NodeJS.Timeout;
 
@@ -163,6 +164,7 @@ export class DesktopSandboxProvider implements SandboxProvider {
     this.setScreenControl = (computer, interactive, context, controlToken) =>
       screens.setScreenControl(computer, interactive, context, controlToken);
     this.releaseScreen = (computer, context) => screens.releaseScreen(computer, context);
+    this.wakeScreen = (computer, context) => screens.wakeScreen(computer, context);
   }
 
   describe() {

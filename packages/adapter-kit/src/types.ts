@@ -128,6 +128,7 @@ export interface TerminalRequest {
 export interface ScreenSession {
   url: string | null;
   mimeType: string;
+  asleep?: boolean;
   close(): Promise<void>;
 }
 

@@ -30,6 +30,7 @@ export interface ScreenService {
     home?: string,
   ): Promise<unknown>;
   wake(key: string): Promise<void>;
+  asleep(key: string): boolean;
   reset(key: string): Promise<void>;
 }
 
@@ -202,11 +203,19 @@ export function createApi(service: ScreenService, supervisorToken: string) {
       if (body.revokeControl !== false) {
         if (record?.controlToken) await service.revokeControl(record);
         return c.json(
-          record ? { screenUrl: screenUrlWithToken(service.viewerUrl, record.viewToken) } : {},
+          record
+            ? {
+                screenUrl: screenUrlWithToken(service.viewerUrl, record.viewToken),
+                asleep: service.asleep(key),
+              }
+            : {},
         );
       }
       if (!record) return c.json({ error: "screen is not allocated" }, 404);
-      return c.json({ screenUrl: screenUrlWithToken(service.viewerUrl, record.viewToken) });
+      return c.json({
+        screenUrl: screenUrlWithToken(service.viewerUrl, record.viewToken),
+        asleep: service.asleep(key),
+      });
     } catch (error) {
       return c.json({ error: error instanceof Error ? error.message : String(error) }, 400);
     }

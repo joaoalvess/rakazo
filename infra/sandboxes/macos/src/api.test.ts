@@ -16,6 +16,7 @@ let acted: Array<[string, ComputerAction[]]>;
 let browsed: Array<[string, PageBrowserCommand, string | undefined]>;
 let woken: string[];
 let resets: string[];
+let sleeping: Set<string>;
 let failure: Error | undefined;
 let app: ReturnType<typeof createApi>;
 
@@ -28,6 +29,7 @@ beforeEach(async () => {
   browsed = [];
   woken = [];
   resets = [];
+  sleeping = new Set();
   failure = undefined;
   const service: ScreenService = {
     registry,
@@ -63,6 +65,7 @@ beforeEach(async () => {
       if (failure) throw failure;
       woken.push(key);
     },
+    asleep: (key) => sleeping.has(key),
     async reset(key) {
       if (failure) throw failure;
       resets.push(key);
@@ -140,8 +143,15 @@ describe("macOS screens API", () => {
       interactive: false,
       revokeControl: false,
     });
-    const body = (await response.json()) as { screenUrl: string };
+    const body = (await response.json()) as { screenUrl: string; asleep: boolean };
     expect(tokenOf(body.screenUrl)).toBe(record.viewToken);
+    expect(body.asleep).toBe(false);
+    sleeping.add("bot-a");
+    const asleep = await request("POST", "/computers/c1/screen-mode", {
+      interactive: false,
+      revokeControl: false,
+    });
+    expect(await asleep.json()).toMatchObject({ asleep: true });
     const redirect = await request("GET", "/computers/c1/screen");
     expect(redirect.status).toBe(302);
     expect(tokenOf(redirect.headers.get("location")!)).toBe(record.viewToken);

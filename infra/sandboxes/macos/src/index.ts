@@ -268,6 +268,7 @@ export async function startMacScreens() {
     async wake(key) {
       await openScreen(key);
     },
+    asleep: (key) => lifecycle.isAsleep(key),
     async revokeControl(record) {
       registry.setControl(record.key, undefined);
       viewer.revoke((grant) => grant.screenKey === record.key && grant.control);

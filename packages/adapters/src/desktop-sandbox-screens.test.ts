@@ -74,6 +74,7 @@ describe("Desktop sandbox with macOS screens", () => {
     expect(plain.provider.pageBrowser).toBeUndefined();
     expect(plain.provider.setScreenControl).toBeUndefined();
     expect(plain.provider.releaseScreen).toBeUndefined();
+    expect(plain.provider.wakeScreen).toBeUndefined();
     const screens = await provision();
     expect(screens.provider.describe().capabilities).toMatchObject({
       graphical: true,
@@ -196,6 +197,37 @@ describe("Desktop sandbox with macOS screens", () => {
     const plain = await provision(false);
     await plain.provider.destroy(plain.computer, context);
     expect(calls).toHaveLength(1);
+  });
+
+  it("reports a sleeping screen and wakes it when the computer is opened", async () => {
+    const wakes = [
+      Response.json({ ok: true }),
+      Response.json({ error: "screen is not allocated" }, { status: 404 }),
+      Response.json({ error: "displayd is gone" }, { status: 500 }),
+    ];
+    supervisor((url) =>
+      url.endsWith("/screen-mode")
+        ? Response.json({
+            screenUrl: "http://127.0.0.1:7093/embed.html?path=websockify%3Ftoken%3Dv",
+            asleep: true,
+          })
+        : wakes.shift()!,
+    );
+    const { provider, computer } = await provision();
+    expect(await provider.connectScreen(computer, { view: "stream" }, context)).toMatchObject({
+      asleep: true,
+    });
+    await provider.wakeScreen!(computer, context);
+    await provider.wakeScreen!(computer, context);
+    await expect(provider.wakeScreen!(computer, context)).rejects.toThrow(
+      "computer screen wake failed: 500",
+    );
+    expect(calls.map(({ method, url }) => [method, url.split("/desktop-bot-a/")[1]])).toEqual([
+      ["POST", "screen-mode"],
+      ["POST", "screen/wake"],
+      ["POST", "screen/wake"],
+      ["POST", "screen/wake"],
+    ]);
   });
 
   it("fails a control request the supervisor cannot grant", async () => {

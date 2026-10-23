@@ -79,12 +79,20 @@ export class MacScreensClient {
       }
       return { url: null, mimeType: "text/html", close: async () => undefined };
     }
-    const body = await readSandboxJson<{ screenUrl?: string }>(res, context.signal);
+    const body = await readSandboxJson<{ screenUrl?: string; asleep?: boolean }>(
+      res,
+      context.signal,
+    );
     if (!body.screenUrl) {
       if (request.interactive) throw new Error("control screen failed to start");
       return { url: null, mimeType: "text/html", close: async () => undefined };
     }
-    return { url: body.screenUrl, mimeType: "text/html", close: async () => undefined };
+    return {
+      url: body.screenUrl,
+      mimeType: "text/html",
+      ...(body.asleep ? { asleep: true } : {}),
+      close: async () => undefined,
+    };
   }
 
   async setScreenControl(
@@ -177,6 +185,18 @@ export class MacScreensClient {
       const detail = await safeBody(res, signal);
       throw new Error(`computer screen release failed: ${res.status} ${detail}`.trim());
     }
+  }
+
+  async wakeScreen(computer: ComputerRef, context: AdapterContext): Promise<void> {
+    if (!context.botId) return;
+    const res = await fetch(this.url(computer, "screen/wake"), {
+      method: "POST",
+      headers: this.headers(computer, context),
+      signal: context.signal,
+    });
+    if (res.status === 404 || res.ok) return;
+    const detail = await safeBody(res, context.signal);
+    throw new Error(`computer screen wake failed: ${res.status} ${detail}`.trim());
   }
 
   async resetScreen(computer: ComputerRef, context: AdapterContext): Promise<void> {
