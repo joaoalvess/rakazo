@@ -15,6 +15,8 @@ import { outgoingCorrelationHeaders } from "@rakazo/logging";
 import { boundedComputerActions, clampRounded, computerObservation } from "./computer-support.js";
 import { readSandboxJson, SCREEN_RELEASE_TIMEOUT_MS, safeBody } from "./docker-sandbox.js";
 
+const SCREEN_WAKE_TIMEOUT_MS = 15_000;
+
 interface ObservationBody {
   image: string;
   mimeType: "image/png" | "image/jpeg";
@@ -189,13 +191,14 @@ export class MacScreensClient {
 
   async wakeScreen(computer: ComputerRef, context: AdapterContext): Promise<void> {
     if (!context.botId) return;
+    const signal = AbortSignal.any([context.signal, AbortSignal.timeout(SCREEN_WAKE_TIMEOUT_MS)]);
     const res = await fetch(this.url(computer, "screen/wake"), {
       method: "POST",
       headers: this.headers(computer, context),
-      signal: context.signal,
+      signal,
     });
     if (res.status === 404 || res.ok) return;
-    const detail = await safeBody(res, context.signal);
+    const detail = await safeBody(res, signal);
     throw new Error(`computer screen wake failed: ${res.status} ${detail}`.trim());
   }
 
