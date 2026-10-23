@@ -20,6 +20,13 @@ final class ProtocolTests: XCTestCase {
     XCTAssertNil(request.cursorHidden)
   }
 
+  func testDecodesARaiseRequest() throws {
+    let request = try JSONDecoder().decode(Request.self, from: Data(#"{"op":"raise","pid":8,"window":568}"#.utf8))
+    XCTAssertEqual(request.op, .raise)
+    XCTAssertEqual(request.pid, 8)
+    XCTAssertEqual(request.window, 568)
+  }
+
   func testRejectsUnknownOperationsAndEvents() {
     XCTAssertThrowsError(try JSONDecoder().decode(Request.self, from: Data(#"{"op":"reboot"}"#.utf8)))
     XCTAssertThrowsError(try JSONDecoder().decode(Request.self, from: Data(#"{"op":"input","events":[{"t":"z"}]}"#.utf8)))

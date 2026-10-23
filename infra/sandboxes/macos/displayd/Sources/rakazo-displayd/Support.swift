@@ -15,6 +15,7 @@ enum DisplaydError: Error, CustomStringConvertible {
   case notShareable(CGDirectDisplayID)
   case encodingFailed
   case socket(String)
+  case windowNotRaised(Int?)
 
   var description: String {
     switch self {
@@ -24,6 +25,7 @@ enum DisplaydError: Error, CustomStringConvertible {
     case let .notShareable(id): "display \(id) is not available for capture"
     case .encodingFailed: "image encoding failed"
     case let .socket(message): message
+    case let .windowNotRaised(window): "window \(window.map(String.init) ?? "missing") cannot be raised"
     }
   }
 }
@@ -37,6 +39,7 @@ func onScreenWindows() -> [WindowInfo] {
   let entries = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
   return entries.compactMap { entry in
     guard
+      let id = entry[kCGWindowNumber as String] as? Int,
       let pid = entry[kCGWindowOwnerPID as String] as? Int,
       let layer = entry[kCGWindowLayer as String] as? Int,
       let dictionary = entry[kCGWindowBounds as String] as? NSDictionary,
@@ -44,12 +47,45 @@ func onScreenWindows() -> [WindowInfo] {
       (entry[kCGWindowAlpha as String] as? Double ?? 1) > 0
     else { return nil }
     return WindowInfo(
+      id: id,
       owner: entry[kCGWindowOwnerName as String] as? String ?? "",
+      title: entry[kCGWindowName as String] as? String,
       pid: pid,
       layer: layer,
       bounds: .enclosing(x: bounds.minX, y: bounds.minY, width: bounds.width, height: bounds.height)
     )
   }
+}
+
+@_silgen_name("_AXUIElementGetWindow")
+private func axWindowNumber(_ element: AXUIElement, _ number: UnsafeMutablePointer<CGWindowID>) -> AXError
+
+func raiseWindow(pid: Int, window: Int) -> Bool {
+  var value: CFTypeRef?
+  let app = AXUIElementCreateApplication(pid_t(pid))
+  guard AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &value) == .success,
+        let elements = value as? [AXUIElement]
+  else { return false }
+  for element in elements {
+    var number: CGWindowID = 0
+    guard axWindowNumber(element, &number) == .success, Int(number) == window else { continue }
+    guard AXUIElementPerformAction(element, kAXRaiseAction as CFString) == .success else { return false }
+    AXUIElementSetAttributeValue(element, kAXMainAttribute as CFString, kCFBooleanTrue)
+    AXUIElementSetAttributeValue(app, kAXFrontmostAttribute as CFString, kCFBooleanTrue)
+    return true
+  }
+  return false
+}
+
+func isFocused(pid: Int, window: Int) -> Bool {
+  guard NSWorkspace.shared.frontmostApplication?.processIdentifier == pid_t(pid) else { return false }
+  var value: CFTypeRef?
+  let app = AXUIElementCreateApplication(pid_t(pid))
+  guard AXUIElementCopyAttributeValue(app, kAXFocusedWindowAttribute as CFString, &value) == .success, let value else {
+    return false
+  }
+  var number: CGWindowID = 0
+  return axWindowNumber(value as! AXUIElement, &number) == .success && Int(number) == window
 }
 
 func nsScreen(for id: CGDirectDisplayID) -> NSScreen? {

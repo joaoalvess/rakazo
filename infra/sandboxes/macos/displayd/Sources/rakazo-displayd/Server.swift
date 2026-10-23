@@ -108,6 +108,16 @@ final class Server {
         let bounds = CGDisplayBounds(displayID)
         let display = Rect.enclosing(x: bounds.minX, y: bounds.minY, width: bounds.width, height: bounds.height)
         reply(Response(windows: WindowStack.onDisplay(onScreenWindows(), display: display, excludingPID: Int(getpid()))))
+      case .raise:
+        guard let pid = request.pid, let window = request.window, raiseWindow(pid: pid, window: window) else {
+          throw DisplaydError.windowNotRaised(request.window)
+        }
+        Task {
+          for _ in 0..<20 where !isFocused(pid: pid, window: window) {
+            try? await Task.sleep(for: .milliseconds(25))
+          }
+          reply(Response())
+        }
       case .screenshot:
         let slot = try activate(request)
         guard let displayID = displays.displayID(slot) else { throw DisplaydError.notOpen(slot) }

@@ -1,7 +1,7 @@
 import Foundation
 
 public enum Operation: String, Decodable, Sendable {
-  case status, permissions, open, close, wake, sleep, screenshot, overlay, input, takeover, windows
+  case status, permissions, open, close, wake, sleep, screenshot, overlay, input, takeover, windows, raise
 }
 
 public enum ImageFormat: String, Decodable, Sendable {
@@ -52,6 +52,8 @@ public struct Request: Decodable, Sendable {
   public var format: ImageFormat?
   public var quality: Double?
   public var prompt: Bool?
+  public var pid: Int?
+  public var window: Int?
 }
 
 public struct FrameSubscription: Decodable, Sendable {
