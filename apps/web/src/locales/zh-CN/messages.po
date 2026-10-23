@@ -4763,6 +4763,10 @@ msgstr "系统"
 msgid "Take control"
 msgstr "接管控制权"
 
+#: src/pages/shell/message-view.tsx
+msgid "Take over"
+msgstr "接管"
+
 #: src/components/teach/TeachComputerOverlay.tsx
 msgid "Teach a task"
 msgstr "示范任务"

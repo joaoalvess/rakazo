@@ -4763,6 +4763,10 @@ msgstr "מערכת"
 msgid "Take control"
 msgstr "השתלטות"
 
+#: src/pages/shell/message-view.tsx
+msgid "Take over"
+msgstr "השתלטות"
+
 #: src/components/teach/TeachComputerOverlay.tsx
 msgid "Teach a task"
 msgstr "לימוד משימה"

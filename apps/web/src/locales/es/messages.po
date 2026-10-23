@@ -4763,6 +4763,10 @@ msgstr "Sistema"
 msgid "Take control"
 msgstr "Tomar el control"
 
+#: src/pages/shell/message-view.tsx
+msgid "Take over"
+msgstr "Asumir"
+
 #: src/components/teach/TeachComputerOverlay.tsx
 msgid "Teach a task"
 msgstr "Enseñar una tarea"

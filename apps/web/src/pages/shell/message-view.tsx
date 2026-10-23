@@ -88,7 +88,7 @@ export const MessageView = memo(function MessageView({
   voiceReady: boolean;
   speaking: boolean;
   onSpeak: () => void;
-  onOpenComputer: (botId?: string) => void;
+  onOpenComputer: (botId?: string, takeControl?: boolean) => void;
   showToolActivity: boolean;
   onReply: (message: ThreadMessage) => void;
   onMarkUnread: (message: ThreadMessage) => void;
@@ -582,9 +582,9 @@ export const MessageView = memo(function MessageView({
                   type="button"
                   size="sm"
                   data-testid="computer-card-open"
-                  onClick={() => onOpenComputer(message.botId)}
+                  onClick={() => onOpenComputer(message.botId, block.state === "Needs you")}
                 >
-                  <Trans>Open</Trans>
+                  {block.state === "Needs you" ? <Trans>Take over</Trans> : <Trans>Open</Trans>}
                 </Button>
               </div>
             );

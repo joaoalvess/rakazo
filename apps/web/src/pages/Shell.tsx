@@ -645,7 +645,9 @@ function SpaceShell() {
   const computerOpenRef = useRef(false);
   const computerBotIdRef = useRef<string | undefined>(undefined);
   const computerBootEpoch = useRef(0);
-  const openComputerRef = useRef<(botId?: string) => Promise<boolean>>(async () => false);
+  const openComputerRef = useRef<(botId?: string, takeControl?: boolean) => Promise<boolean>>(
+    async () => false,
+  );
   const [computerViewport, setComputerViewport] = useState<{
     height: number;
     offsetTop: number;
@@ -2899,8 +2901,8 @@ function SpaceShell() {
     }
   }
   openComputerRef.current = openComputer;
-  const onOpenComputer = useCallback((botId?: string) => {
-    void openComputerRef.current(botId);
+  const onOpenComputer = useCallback((botId?: string, takeControl?: boolean) => {
+    void openComputerRef.current(botId, takeControl);
   }, []);
 
   async function releaseComputer(reason?: ComputerReleaseReason) {

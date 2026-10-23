@@ -4763,6 +4763,10 @@ msgstr "सिस्टम"
 msgid "Take control"
 msgstr "नियंत्रण लें"
 
+#: src/pages/shell/message-view.tsx
+msgid "Take over"
+msgstr "संभालें"
+
 #: src/components/teach/TeachComputerOverlay.tsx
 msgid "Teach a task"
 msgstr "कोई कार्य सिखाएं"
