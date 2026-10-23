@@ -478,6 +478,31 @@ export const builtinAgentTools: ConnectorTool[] = [
     },
   },
   {
+    name: "request_form",
+    description:
+      "Ask the user for the details a form on the computer needs (names, emails, phone numbers, addresses, or other short text) with one card in this chat, then wait for their answers and type them into the page. Ask for one step of the form at a time. Never ask for passwords, card numbers, or codes here; use request_secret or request_takeover for those.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        title: { type: "string", minLength: 1, maxLength: 240 },
+        fields: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              label: { type: "string", minLength: 1, maxLength: 80 },
+              type: { type: "string", enum: ["text", "email", "phone", "address"] },
+            },
+            required: ["label", "type"],
+          },
+          minItems: 1,
+          maxItems: 8,
+        },
+      },
+      required: ["title", "fields"],
+    },
+  },
+  {
     name: "message_user",
     // Read lazily: the cap comes from process.env, which may be filled after import.
     get description() {

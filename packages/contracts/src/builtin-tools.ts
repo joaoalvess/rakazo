@@ -32,6 +32,7 @@ export const BUILTIN_TOOL_NAMES = [
   "request_takeover",
   "confirm_computer_action",
   "ask_user",
+  "request_form",
   "connect_app",
   "message_user",
   "request_secret",

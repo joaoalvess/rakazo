@@ -418,6 +418,7 @@ describe("run computer provisioning", () => {
         "browser_navigate",
         "browser_act",
         "confirm_computer_action",
+        "request_form",
       ];
       if (screens) expect(tools).toEqual(expect.arrayContaining(screenTools));
       else for (const name of screenTools) expect(tools).not.toContain(name);

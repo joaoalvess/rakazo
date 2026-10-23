@@ -315,6 +315,53 @@ it("keeps a connector code card open to others in the chat, without Dismiss", as
   expect(button("Dismiss")).toBeUndefined();
 });
 
+it("sends a form's answers one label per line", async () => {
+  const onAnswer = vi.fn(async () => undefined);
+  await render(
+    {
+      kind: "ask",
+      text: "Dados da entrega",
+      status: "pending",
+      fields: [
+        { id: "field-1", label: "Nome", type: "text" },
+        { id: "field-2", label: "E-mail", type: "email" },
+        { id: "field-3", label: "Endereço", type: "address" },
+      ],
+    },
+    undefined,
+    onAnswer,
+  );
+  const [name, email, address] = [
+    ...container.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>("input, textarea"),
+  ];
+  expect(email!.getAttribute("type")).toBe("email");
+  expect(address!.tagName).toBe("TEXTAREA");
+  expect(button("Send answer")!.disabled).toBe(true);
+  await act(async () => {
+    for (const [field, value] of [
+      [name!, " João "],
+      [email!, "joao@example.com"],
+      [address!, "Rua A, 10"],
+    ] as const) {
+      const prototype =
+        field instanceof HTMLTextAreaElement
+          ? HTMLTextAreaElement.prototype
+          : HTMLInputElement.prototype;
+      Object.getOwnPropertyDescriptor(prototype, "value")!.set!.call(field, value);
+      field.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+  });
+
+  await act(async () => button("Send answer")!.click());
+
+  expect(onAnswer).toHaveBeenCalledWith(
+    "Nome: João\nE-mail: joao@example.com\nEndereço: Rua A, 10",
+    undefined,
+  );
+  expect(container.querySelector("input")).toBeNull();
+  expect(container.textContent).toContain("Answered: Nome: João");
+});
+
 it("marks an approval for a step on the computer", async () => {
   const onAnswer = vi.fn(async () => undefined);
   await render(

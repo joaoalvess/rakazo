@@ -7999,6 +7999,10 @@ export function createRunExecutor(deps: ExecutorDeps) {
                 id: action.id,
                 label: redactSecrets(action.label, runSecrets),
               }));
+              const safeFields = event.fields?.map((field) => ({
+                ...field,
+                label: redactSecrets(field.label, runSecrets),
+              }));
               await workspaceCheckpoint.flush();
               await persistTurnCheckpoint(event.executionId);
               await settleRunningHelpers();
@@ -8017,6 +8021,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
                     detail: safeDetail,
                     status: "pending",
                     actions: safeActions,
+                    ...(safeFields ? { fields: safeFields } : {}),
                   },
                 ],
                 // Keep unredacted labels on the run for resume; message blocks stay redacted.
@@ -9036,7 +9041,7 @@ export function selectBuiltinToolsForRun(options: {
   );
 }
 
-const SCREEN_REQUEST_TOOL_NAMES = new Set(["confirm_computer_action"]);
+const SCREEN_REQUEST_TOOL_NAMES = new Set(["confirm_computer_action", "request_form"]);
 
 export const PAGE_BROWSER_TOOL_NAMES = new Set([
   "browser_navigate",

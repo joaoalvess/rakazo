@@ -187,6 +187,7 @@ const OWN_STATE_RESULT_TOOLS = new Set([
   "recall_memory",
   "remember",
   "render_plot",
+  "request_form",
   "request_secret",
   "save_memory",
   "save_shared_memory",

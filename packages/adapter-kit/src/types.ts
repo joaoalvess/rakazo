@@ -590,6 +590,7 @@ export type AgentRuntimeEvent =
       text: string;
       detail?: string;
       actions?: Array<{ id: string; label: string }>;
+      fields?: Array<{ id: string; label: string; type: "text" | "email" | "phone" | "address" }>;
     }
   | { type: "takeover"; reason: string; executionId?: string }
   | ({

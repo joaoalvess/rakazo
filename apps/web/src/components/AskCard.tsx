@@ -5,7 +5,7 @@ import type { ThreadMessage } from "@rakazo/contracts";
 import { BOT_INSTRUCTIONS_MAX_LENGTH, commandVariableName } from "@rakazo/contracts";
 import { isApprovalAskBlock, isSecretAskBlock, selectedAskActionLabel } from "@rakazo/core";
 import { Button, Input, Textarea } from "@rakazo/ui-web";
-import { useState } from "react";
+import { useId, useState } from "react";
 import { rpc } from "../lib/rpc";
 import { errorText } from "../lib/user-error";
 
@@ -44,6 +44,10 @@ function approvalActionLabel(
   return fallback;
 }
 
+function formAnswer(fields: NonNullable<AskBlock["fields"]>, values: Record<string, string>) {
+  return fields.map((field) => `${field.label}: ${values[field.id]?.trim() ?? ""}`).join("\n");
+}
+
 function secretFieldLabel(purpose: AskBlock["purpose"]): string {
   if (purpose === "password") return t`Password`;
   if (purpose === "api_key") return t`API key`;
@@ -71,6 +75,8 @@ export function AskCard({
   const [acceptedAnswer, setAcceptedAnswer] = useState<string>();
   const [undone, setUndone] = useState(false);
   const [username, setUsername] = useState("");
+  const [formValues, setFormValues] = useState<Record<string, string>>({});
+  const formId = useId();
   const [pendingAction, setPendingAction] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const submitting = pendingAction !== null;
@@ -234,7 +240,7 @@ export function AskCard({
         </form>
       ) : answered ? (
         <div
-          className={`mt-3.5 text-[13.5px] font-medium ${displayedAnswer === "deny" || displayedDismissed ? "text-muted-foreground" : "text-success"}`}
+          className={`mt-3.5 whitespace-pre-line text-[13.5px] font-medium ${displayedAnswer === "deny" || displayedDismissed ? "text-muted-foreground" : "text-success"}`}
         >
           {block.instructionUpdate
             ? displayedAnswer === "deny"
@@ -253,7 +259,48 @@ export function AskCard({
         <div className="mt-3.5 text-[13.5px] font-medium text-muted-foreground">
           <Trans>No longer active</Trans>
         </div>
-      ) : ownerOnly ? null : askActions?.length ? (
+      ) : ownerOnly ? null : block.fields?.length ? (
+        <form
+          className="mt-3.5 flex flex-col gap-2.5"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void submitAnswer(formAnswer(block.fields!, formValues));
+          }}
+        >
+          {block.fields.map((field) => (
+            <div key={field.id} className="flex flex-col gap-1 text-[13px] text-muted-foreground">
+              <label htmlFor={`${formId}-${field.id}`}>{field.label}</label>
+              {field.type === "address" ? (
+                <Textarea
+                  id={`${formId}-${field.id}`}
+                  disabled={submitting}
+                  value={formValues[field.id] ?? ""}
+                  onChange={(event) =>
+                    setFormValues({ ...formValues, [field.id]: event.target.value })
+                  }
+                />
+              ) : (
+                <Input
+                  id={`${formId}-${field.id}`}
+                  type={field.type === "email" ? "email" : field.type === "phone" ? "tel" : "text"}
+                  disabled={submitting}
+                  value={formValues[field.id] ?? ""}
+                  onChange={(event) =>
+                    setFormValues({ ...formValues, [field.id]: event.target.value })
+                  }
+                />
+              )}
+            </div>
+          ))}
+          <Button
+            type="submit"
+            className="self-start"
+            disabled={submitting || !block.fields.some((field) => formValues[field.id]?.trim())}
+          >
+            {submitting ? <Trans>Sending…</Trans> : <Trans>Send answer</Trans>}
+          </Button>
+        </form>
+      ) : askActions?.length ? (
         <div className={approvalActions ? "mt-3.5 flex flex-wrap gap-2" : "mt-3.5 space-y-1.5"}>
           {displayActions?.map((action) => (
             <Button

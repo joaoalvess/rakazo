@@ -124,6 +124,15 @@ export const MessageBlock = z.discriminatedUnion("kind", [
     /** On a fetch approval, the site an "always" answer allows. */
     site: z.string().optional(),
     source: z.literal("computer").optional(),
+    fields: z
+      .array(
+        z.object({
+          id: z.string(),
+          label: z.string(),
+          type: z.enum(["text", "email", "phone", "address"]),
+        }),
+      )
+      .optional(),
     status: z.enum(["pending", "answered"]).optional(),
     answer: z.string().optional(),
     /** A secret request the user dismissed instead of answering. */

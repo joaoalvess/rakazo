@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const fakeAgentState = vi.hoisted(() => ({
   options: ["Berlin", "Seoul", "Toronto"],
+  form: undefined as Record<string, unknown> | undefined,
   tools: [] as Array<{
     name: string;
     execute: (toolCallId: string, params: Record<string, unknown>) => Promise<unknown>;
@@ -22,6 +23,12 @@ vi.mock("@earendil-works/pi-agent-core", () => ({
     subscribe(_listener: unknown) {}
 
     async prompt() {
+      if (fakeAgentState.form) {
+        const requestForm = this.tools.find((tool) => tool.name === "request_form");
+        if (!requestForm) throw new Error("request_form tool missing");
+        await requestForm.execute("call-form-1", fakeAgentState.form);
+        return;
+      }
       const askUser = this.tools.find((tool) => tool.name === "ask_user");
       if (!askUser) throw new Error("ask_user tool missing");
       await askUser.execute("call-choice-1", {
@@ -71,6 +78,16 @@ const choiceTool: ConnectorTool = {
   },
 };
 
+const formTool: ConnectorTool = {
+  name: "request_form",
+  description: "Ask the user to fill a form",
+  inputSchema: {
+    type: "object",
+    properties: { title: { type: "string" }, fields: { type: "array" } },
+    required: ["title", "fields"],
+  },
+};
+
 const runContext = {
   operationId: "choice-pi",
   traceId: "choice-pi",
@@ -94,6 +111,7 @@ describe("Pi choice asks", () => {
   beforeEach(() => {
     fakeAgentState.tools = [];
     fakeAgentState.options = ["Berlin", "Seoul", "Toronto"];
+    fakeAgentState.form = undefined;
   });
 
   it("emits a tappable ask and stops without a finished-work fallback", async () => {
@@ -125,5 +143,41 @@ describe("Pi choice asks", () => {
       for await (const event of runtime.run(runRequest, runContext)) events.push(event);
     }).rejects.toThrow("ask_user requires two to four unique, non-empty options");
     expect(events.some((event) => event.type === "ask")).toBe(false);
+  });
+
+  it("emits a form ask whose fields the user fills in", async () => {
+    fakeAgentState.form = {
+      title: "Dados da entrega",
+      fields: [
+        { label: " Nome ", type: "text" },
+        { label: "E-mail", type: "email" },
+      ],
+    };
+    const runtime = new PiAgentRuntime();
+    const events: AgentRuntimeEvent[] = [];
+
+    for await (const event of runtime.run({ ...runRequest, tools: [formTool] }, runContext))
+      events.push(event);
+
+    expect(events).toContainEqual({
+      type: "ask",
+      text: "Dados da entrega",
+      fields: [
+        { id: "field-1", label: "Nome", type: "text" },
+        { id: "field-2", label: "E-mail", type: "email" },
+      ],
+    });
+  });
+
+  it("rejects a form field without a known type", async () => {
+    fakeAgentState.form = {
+      title: "Cartão",
+      fields: [{ label: "Número do cartão", type: "card" }],
+    };
+    const runtime = new PiAgentRuntime();
+
+    await expect(async () => {
+      for await (const _event of runtime.run({ ...runRequest, tools: [formTool] }, runContext));
+    }).rejects.toThrow("request_form requires one to eight fields with a label and a type");
   });
 });

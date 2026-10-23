@@ -126,6 +126,8 @@ const MODEL_PROVIDER_RETRY_DELAYS_MS = [2_000, 8_000, 20_000] as const;
 // instead of taking another assistant turn. A bounded internal follow-up keeps
 // that provider quirk from making a long task look complete after one step.
 const MAX_SILENT_TOOL_CONTINUATIONS = 3;
+const FORM_FIELD_TYPES = ["text", "email", "phone", "address"] as const;
+type FormFieldType = (typeof FORM_FIELD_TYPES)[number];
 // Sent in the user's role, so marked as automated: models took the old wording for the
 // user telling them never to stop, and kept going instead of asking.
 export const SILENT_TOOL_CONTINUATION_PROMPT = automated(
@@ -740,7 +742,9 @@ export class PiAgentRuntime implements AgentRuntime {
                 if (!tool) throw new Error("Pending checkpoint tool is no longer available");
                 const interaction =
                   call.id === restored.pendingToolCallId &&
-                  (call.name === "ask_user" || call.name === "request_takeover");
+                  (call.name === "ask_user" ||
+                    call.name === "request_form" ||
+                    call.name === "request_takeover");
                 let result: AgentToolResult<JsonValue | undefined>;
                 try {
                   signal.throwIfAborted();
@@ -1471,6 +1475,27 @@ function toAgentTool(tool: ConnectorTool, host: ToolHost, exposedName: string): 
                   terminate: true,
                 };
               }
+              if (tool.name === "request_form") {
+                const requested = Array.isArray(args.fields) ? args.fields.map(formField) : [];
+                const fields = requested.filter((field) => field !== undefined);
+                if (fields.length < 1 || fields.length > 8 || fields.length !== requested.length) {
+                  throw new Error(
+                    "request_form requires one to eight fields with a label and a type",
+                  );
+                }
+                host.pausePending = true;
+                host.queue.push({
+                  type: "ask",
+                  ...(host.request.onCheckpoint ? { executionId } : {}),
+                  text: String(args.title ?? "Fill in these details."),
+                  fields,
+                });
+                return {
+                  content: [{ type: "text", text: "Waiting for the user's answers." }],
+                  details: args,
+                  terminate: true,
+                };
+              }
               if (tool.name === "request_secret") {
                 if (host.request.executeTool) {
                   const result = await host.request.executeTool(tool.name, args, executionId);
@@ -1904,6 +1929,13 @@ async function executeSubagent(host: ToolHost, executionId: string, args: Record
 }
 
 /** Build AgentTool.parameters for a connector tool, including OpenAI wire fidelity. */
+function formField(field: unknown, index: number) {
+  const { label, type } = (field ?? {}) as { label?: unknown; type?: unknown };
+  const text = String(label ?? "").trim();
+  if (!text || text.length > 80 || !FORM_FIELD_TYPES.includes(type as FormFieldType)) return;
+  return { id: `field-${index + 1}`, label: text, type: type as FormFieldType };
+}
+
 export function parametersFor(tool: ConnectorTool) {
   const builtin = builtinParameters(tool);
   const schema = builtin
