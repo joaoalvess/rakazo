@@ -2895,7 +2895,9 @@ function SpaceShell() {
         botId: id,
         takeControl: needsTakeover && !blocked,
         showProgress: (needsTakeover && !blocked) || targetComputer?.state !== "running",
-        force: targetComputer?.state !== "running",
+        force:
+          targetComputer?.state !== "running" ||
+          (targetComputer.kind === "desktop" && targetComputer.graphical),
       });
       return true;
     } catch {
