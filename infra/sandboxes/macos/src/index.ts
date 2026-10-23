@@ -78,7 +78,7 @@ export async function startMacScreens() {
   const feeds = new ScreenFeeds(displayd, {
     fps: 30,
     quality: 0.6,
-    onError: (slot, error) => logger.warn("screen capture ended", { slot, error: error.message }),
+    onError: (slot, error) => logger.warn("screen capture ended", { slot, reason: error.message }),
   });
   const viewer = createViewerServer({
     embedRoot: path.join(repositoryRoot, "infra", "sandboxes", "computer"),
@@ -97,7 +97,7 @@ export async function startMacScreens() {
     },
     controlInput: (grant) => {
       const warn = (error: Error) =>
-        logger.warn("takeover input failed", { slot: grant.slot, error: error.message });
+        logger.warn("takeover input failed", { slot: grant.slot, reason: error.message });
       void displayd.call({ op: "takeover", slot: grant.slot, active: true }).catch(warn);
       void displayd.call({ op: "overlay", slot: grant.slot, cursorHidden: true }).catch(warn);
       const takeover = new TakeoverInput(
@@ -123,7 +123,7 @@ export async function startMacScreens() {
     } catch (error) {
       logger.warn("browser window unavailable", {
         screen: record.key,
-        error: error instanceof Error ? error.message : String(error),
+        reason: error instanceof Error ? error.message : String(error),
       });
     }
   };
