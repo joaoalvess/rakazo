@@ -182,6 +182,22 @@ describe("Desktop sandbox with macOS screens", () => {
     ]);
   });
 
+  it("resets the bot's screen when its computer is recovered or reset", async () => {
+    supervisor(() => Response.json({ ok: true }));
+    const { provider, computer } = await provision();
+    await provider.destroy(computer, context);
+    expect(calls).toEqual([
+      expect.objectContaining({
+        url: "http://127.0.0.1:7092/computers/desktop-bot-a/screen/reset",
+        method: "POST",
+        headers: expect.objectContaining({ "x-rakazo-screen-id": "bot-a" }),
+      }),
+    ]);
+    const plain = await provision(false);
+    await plain.provider.destroy(plain.computer, context);
+    expect(calls).toHaveLength(1);
+  });
+
   it("fails a control request the supervisor cannot grant", async () => {
     supervisor(() =>
       Response.json({ error: "This computer cannot allocate another screen." }, { status: 400 }),

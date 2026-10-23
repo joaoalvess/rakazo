@@ -449,7 +449,8 @@ export class DesktopSandboxProvider implements SandboxProvider {
     }
   }
 
-  async destroy(computer: ComputerRef, _context: AdapterContext): Promise<void> {
+  async destroy(computer: ComputerRef, context: AdapterContext): Promise<void> {
+    await this.opts.screens?.resetScreen(computer, context);
     const box = this.boxFor(computer);
     if (box) {
       this.cancelOwnedProcesses(box.home);

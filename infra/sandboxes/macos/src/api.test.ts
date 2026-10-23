@@ -15,6 +15,7 @@ let revoked: ScreenRecord[];
 let acted: Array<[string, ComputerAction[]]>;
 let browsed: Array<[string, PageBrowserCommand, string | undefined]>;
 let woken: string[];
+let resets: string[];
 let failure: Error | undefined;
 let app: ReturnType<typeof createApi>;
 
@@ -26,6 +27,7 @@ beforeEach(async () => {
   acted = [];
   browsed = [];
   woken = [];
+  resets = [];
   failure = undefined;
   const service: ScreenService = {
     registry,
@@ -60,6 +62,10 @@ beforeEach(async () => {
     async wake(key) {
       if (failure) throw failure;
       woken.push(key);
+    },
+    async reset(key) {
+      if (failure) throw failure;
+      resets.push(key);
     },
   };
   app = createApi(service, token);
@@ -273,6 +279,15 @@ describe("macOS screens API", () => {
     expect(woken).toEqual(["bot-a"]);
     failure = new Error("screen 0 is not open");
     const failed = await request("POST", "/computers/c1/screen/wake");
+    expect(failed.status).toBe(500);
+  });
+
+  it("resets the bot's screen so its next use starts a new one", async () => {
+    const response = await request("POST", "/computers/c1/screen/reset");
+    expect(await response.json()).toEqual({ ok: true });
+    expect(resets).toEqual(["bot-a"]);
+    failure = new Error("displayd is gone");
+    const failed = await request("POST", "/computers/c1/screen/reset");
     expect(failed.status).toBe(500);
   });
 

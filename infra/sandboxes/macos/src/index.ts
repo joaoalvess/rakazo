@@ -227,6 +227,14 @@ export async function startMacScreens() {
   };
 
   const service: ScreenService = {
+    async reset(key) {
+      const record = registry.get(key);
+      if (!record) return;
+      if (record.controlToken) await service.revokeControl(record);
+      await closeScreen(record);
+      await registry.remove(key);
+      logger.info("screen reset", { screen: key, slot: record.slot });
+    },
     registry,
     viewerUrl: `http://${hostname}:${viewerPort}/embed.html`,
     openScreen,

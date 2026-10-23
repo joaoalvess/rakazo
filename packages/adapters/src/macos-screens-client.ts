@@ -179,6 +179,19 @@ export class MacScreensClient {
     }
   }
 
+  async resetScreen(computer: ComputerRef, context: AdapterContext): Promise<void> {
+    if (!context.botId) return;
+    const res = await fetch(this.url(computer, "screen/reset"), {
+      method: "POST",
+      headers: this.headers(computer, context),
+      signal: context.signal,
+    });
+    if (!res.ok) {
+      const detail = await safeBody(res, context.signal);
+      throw new Error(`computer screen reset failed: ${res.status} ${detail}`.trim());
+    }
+  }
+
   private url(computer: ComputerRef, route: string) {
     return `${this.supervisorUrl.replace(/\/$/, "")}/computers/${encodeURIComponent(computer.id)}/${route}`;
   }

@@ -30,6 +30,7 @@ export interface ScreenService {
     home?: string,
   ): Promise<unknown>;
   wake(key: string): Promise<void>;
+  reset(key: string): Promise<void>;
 }
 
 const pointerSchema = z.object({
@@ -274,6 +275,15 @@ export function createApi(service: ScreenService, supervisorToken: string) {
     if (!service.registry.get(key)) return c.json({ error: "screen is not allocated" }, 404);
     try {
       await service.wake(key);
+      return c.json({ ok: true });
+    } catch (error) {
+      return c.json({ error: errorMessage(error) }, 500);
+    }
+  });
+
+  app.post("/computers/:id/screen/reset", async (c) => {
+    try {
+      await service.reset(screenKey(c, c.req.param("id")));
       return c.json({ ok: true });
     } catch (error) {
       return c.json({ error: errorMessage(error) }, 500);
