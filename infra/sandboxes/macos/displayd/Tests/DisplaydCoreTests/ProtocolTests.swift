@@ -68,6 +68,9 @@ final class ProtocolTests: XCTestCase {
   func testScreenPoolSerials() {
     XCTAssertEqual(ScreenPool.serial(0), 0x5400)
     XCTAssertEqual(ScreenPool.serial(8), 0x5408)
+    XCTAssertEqual(ScreenPool.slot(serial: 0x5408), 8)
+    XCTAssertNil(ScreenPool.slot(serial: ScreenPool.reservedSerial))
+    XCTAssertNil(ScreenPool.slot(serial: 0x53FF))
     XCTAssertTrue(ScreenPool.isValid(15))
     XCTAssertFalse(ScreenPool.isValid(16))
     XCTAssertFalse(ScreenPool.isValid(-1))

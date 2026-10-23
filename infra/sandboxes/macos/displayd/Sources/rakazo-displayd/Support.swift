@@ -10,7 +10,7 @@ func log(_ message: String) {
 
 enum DisplaydError: Error, CustomStringConvertible {
   case invalidSlot(Int?)
-  case createFailed(Int)
+  case createFailed(String)
   case notOpen(Int)
   case notShareable(CGDirectDisplayID)
   case encodingFailed
@@ -19,7 +19,7 @@ enum DisplaydError: Error, CustomStringConvertible {
   var description: String {
     switch self {
     case let .invalidSlot(slot): "invalid slot \(slot.map(String.init) ?? "missing")"
-    case let .createFailed(slot): "could not create the display for slot \(slot)"
+    case let .createFailed(name): "could not create the display \(name)"
     case let .notOpen(slot): "slot \(slot) is not open"
     case let .notShareable(id): "display \(id) is not available for capture"
     case .encodingFailed: "image encoding failed"
