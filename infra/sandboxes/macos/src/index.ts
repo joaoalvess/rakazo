@@ -7,9 +7,11 @@ import { resolveSupervisorToken } from "@rakazo/core";
 import { loadRootEnv } from "@rakazo/core/node/load-root-env";
 import { SERVICE_NAMES } from "@rakazo/logging";
 import { createRootLogger } from "@rakazo/logging/axiom";
+import { BotComputer } from "./actions.js";
 import { createApi, type ScreenService } from "./api.js";
 import { Chrome } from "./chrome.js";
 import { DisplaydClient, type Rect } from "./displayd.js";
+import { CuaDriver } from "./driver.js";
 import { ScreenFeeds } from "./feed.js";
 import { ControlInput } from "./input.js";
 import {
@@ -45,8 +47,21 @@ export async function startMacScreens() {
       path.join(homedir(), "Library", "Application Support", "Rakazo", "displayd"),
   );
   const chrome = new Chrome(`http://127.0.0.1:${process.env.MAC_SCREENS_CHROME_PORT ?? 9333}`);
+  const driver = new CuaDriver(process.env.MAC_SCREENS_CUA_DRIVER ?? "cua-driver");
   const registry = new ScreenRegistry(path.join(stateDir, "state.json"), resolveScreenLimit());
   await registry.load();
+  const screenBounds = async (slot: number) => {
+    const { screens } = await displayd.call({ op: "status" });
+    const screen = screens?.find((candidate) => candidate.slot === slot);
+    if (!screen) throw new Error(`screen ${slot} is not open`);
+    return screen.bounds;
+  };
+  const browserPage = async (key: string) => {
+    const browser = registry.get(key)?.browser;
+    return browser ? chrome.pageView(browser) : undefined;
+  };
+  const screenWindows = async (slot: number) =>
+    (await displayd.call({ op: "windows", slot })).windows ?? [];
   const feeds = new ScreenFeeds(displayd, {
     fps: 30,
     quality: 0.6,
@@ -74,18 +89,9 @@ export async function startMacScreens() {
       void displayd.call({ op: "overlay", slot: grant.slot, cursorHidden: true }).catch(warn);
       const takeover = new TakeoverInput(
         {
-          display: async () => {
-            const { screens } = await displayd.call({ op: "status" });
-            const screen = screens?.find((candidate) => candidate.slot === grant.slot);
-            if (!screen) throw new Error(`screen ${grant.slot} is not open`);
-            return screen.bounds;
-          },
-          page: async () => {
-            const browser = registry.get(grant.screenKey)?.browser;
-            return browser ? chrome.pageView(browser) : undefined;
-          },
-          windows: async () =>
-            (await displayd.call({ op: "windows", slot: grant.slot })).windows ?? [],
+          display: () => screenBounds(grant.slot),
+          page: () => browserPage(grant.screenKey),
+          windows: () => screenWindows(grant.slot),
           native: (events) => displayd.call({ op: "input", slot: grant.slot, events }),
         },
         warn,
@@ -95,9 +101,12 @@ export async function startMacScreens() {
     },
   });
 
-  const placeBrowser = async (record: ScreenRecord, display: Rect) => {
+  const placeBrowser = async (record: ScreenRecord, display: Rect, show = false) => {
     try {
-      await registry.setBrowser(record.key, await chrome.placeWindow(record.browser, display));
+      await registry.setBrowser(
+        record.key,
+        await chrome.placeWindow(record.browser, display, show),
+      );
     } catch (error) {
       logger.warn("browser window unavailable", {
         screen: record.key,
@@ -106,25 +115,82 @@ export async function startMacScreens() {
     }
   };
 
+  let foregroundTurn: Promise<unknown> = Promise.resolve();
+  const foreground = <T>(work: () => Promise<T>) => {
+    const turn = foregroundTurn.then(work);
+    foregroundTurn = turn.catch(() => undefined);
+    return turn;
+  };
+  const computers = new Map<string, BotComputer>();
+  const computer = (record: ScreenRecord) => {
+    let current = computers.get(record.key);
+    if (!current) {
+      current = new BotComputer({
+        display: () => screenBounds(record.slot),
+        otherDisplays: async () =>
+          ((await displayd.call({ op: "status" })).screens ?? [])
+            .filter((screen) => screen.slot !== record.slot)
+            .map((screen) => screen.bounds),
+        page: () => browserPage(record.key),
+        windows: () => screenWindows(record.slot),
+        driver: (tool, args) => driver.call(tool, args),
+        raise: (pid, window) => displayd.call({ op: "raise", pid, window }),
+        foreground,
+        browser: async (visible) => {
+          const current = registry.get(record.key);
+          if (!current) return;
+          if (visible) await placeBrowser(current, await screenBounds(record.slot), true);
+          else if (current.browser) await chrome.hideWindow(current.browser);
+        },
+        overlay: (update) => displayd.call({ op: "overlay", slot: record.slot, ...update }),
+      });
+      computers.set(record.key, current);
+    }
+    return current;
+  };
+
   const closeScreen = async (record: ScreenRecord) => {
+    computers.delete(record.key);
     viewer.revoke((grant) => grant.screenKey === record.key);
     feeds.close(record.slot);
     if (record.browser) await chrome.closeWindow(record.browser).catch(() => undefined);
     await displayd.call({ op: "close", slot: record.slot });
   };
 
+  const openScreen = async (key: string) => {
+    const { record, evicted } = await registry.allocate(key);
+    if (evicted) {
+      logger.info("screen evicted", { screen: evicted.key, slot: evicted.slot });
+      await closeScreen(evicted);
+    }
+    const { screen } = await displayd.call({ op: "open", slot: record.slot });
+    if (screen) await placeBrowser(record, screen.bounds);
+    return record;
+  };
+
   const service: ScreenService = {
     registry,
     viewerUrl: `http://${hostname}:${viewerPort}/embed.html`,
-    async openScreen(key) {
-      const { record, evicted } = await registry.allocate(key);
-      if (evicted) {
-        logger.info("screen evicted", { screen: evicted.key, slot: evicted.slot });
-        await closeScreen(evicted);
-      }
-      const { screen } = await displayd.call({ op: "open", slot: record.slot });
-      if (screen) await placeBrowser(record, screen.bounds);
-      return record;
+    openScreen,
+    async observe(key) {
+      const record = await openScreen(key);
+      const bot = computer(record);
+      const [shot, activeWindow] = await Promise.all([
+        displayd.call({ op: "screenshot", slot: record.slot, format: "png" }),
+        bot.activeWindow().catch(() => undefined),
+      ]);
+      if (!shot.image) throw new Error("displayd returned no screenshot");
+      return {
+        image: shot.image,
+        mimeType: shot.mimeType ?? "image/png",
+        width: SCREEN_WIDTH,
+        height: SCREEN_HEIGHT,
+        cursor: bot.position,
+        ...(activeWindow ? { activeWindow } : {}),
+      };
+    },
+    async act(key, actions) {
+      return computer(await openScreen(key)).act(actions);
     },
     async revokeControl(record) {
       registry.setControl(record.key, undefined);

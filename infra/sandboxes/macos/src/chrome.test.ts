@@ -28,6 +28,7 @@ let targets: FakeTarget[];
 let windows: Map<number, FakeWindow>;
 let calls: string[];
 let nextWindow: number;
+let offscreenMoves: number;
 
 function handle(method: string, params: Record<string, unknown>, sessionId?: string) {
   calls.push(method);
@@ -52,9 +53,12 @@ function handle(method: string, params: Record<string, unknown>, sessionId?: str
     case "Browser.setWindowBounds": {
       const window = windows.get(params.windowId as number)!;
       const bounds = params.bounds as Partial<FakeWindow> & { windowState?: string };
-      if (bounds.windowState === "maximized") {
+      if (bounds.left !== undefined && offscreenMoves > 0) {
+        offscreenMoves--;
+        Object.assign(window, { ...bounds, left: 0 });
+      } else if (bounds.windowState === "maximized") {
         Object.assign(window, {
-          left: display.x,
+          left: window.left < display.x ? 0 : display.x,
           top: display.y + 30,
           width: 1280,
           height: 770,
@@ -108,6 +112,7 @@ beforeEach(async () => {
   windows = new Map();
   calls = [];
   nextWindow = 1;
+  offscreenMoves = 0;
   sockets = new WebSocketServer({ noServer: true });
   server = http.createServer((_request, response) => {
     const { port } = server.address() as AddressInfo;
@@ -178,6 +183,27 @@ describe("Chrome", () => {
     await chrome.placeWindow(window, display);
     expect(calls.filter((call) => call === "Browser.setWindowBounds")).toHaveLength(3);
     expect(windows.get(1)?.left).toBe(1280);
+  });
+
+  it("retries while Chrome has not seen a new display yet", async () => {
+    offscreenMoves = 1;
+    const window = await chrome.placeWindow(undefined, display);
+    expect(calls.filter((call) => call === "Browser.setWindowBounds")).toHaveLength(6);
+    expect(windows.get(window.windowId)?.left).toBe(1280);
+    offscreenMoves = 99;
+    windows.set(window.windowId, { left: 0, top: 30, width: 1280, height: 770 });
+    await expect(chrome.placeWindow(window, display)).rejects.toThrow(/off the screen/);
+  });
+
+  it("leaves a hidden window minimized until it is shown again", async () => {
+    const window = await chrome.placeWindow(undefined, display);
+    await chrome.hideWindow(window);
+    expect(windows.get(1)?.windowState).toBe("minimized");
+    calls = [];
+    await chrome.placeWindow(window, display);
+    expect(calls).toEqual(["Browser.getWindowBounds"]);
+    await chrome.placeWindow(window, display, true);
+    expect(windows.get(1)?.windowState).toBe("maximized");
   });
 
   it("opens a new window when the window is gone or Chrome restarted", async () => {

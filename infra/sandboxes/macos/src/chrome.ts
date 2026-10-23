@@ -33,6 +33,9 @@ interface Geometry {
   scale: number;
 }
 
+const PLACE_ATTEMPTS = 4;
+const PLACE_RETRY_MS = 250;
+
 const GEOMETRY =
   "({ visible: document.visibilityState === 'visible', x: screenX, y: screenY, outerWidth, outerHeight, innerWidth, innerHeight, scale: devicePixelRatio })";
 
@@ -42,10 +45,18 @@ export class Chrome {
 
   constructor(private readonly endpoint: string) {}
 
-  async placeWindow(window: BrowserWindow | undefined, display: Rect): Promise<BrowserWindow> {
+  async placeWindow(
+    window: BrowserWindow | undefined,
+    display: Rect,
+    show = false,
+  ): Promise<BrowserWindow> {
     const { cdp, browserId } = await this.connect();
     let windowId = window?.browserId === browserId ? window.windowId : undefined;
-    const bounds = windowId === undefined ? undefined : await this.bounds(cdp, windowId);
+    let bounds = windowId === undefined ? undefined : await this.bounds(cdp, windowId);
+    if (show && bounds?.windowState === "minimized") {
+      await cdp.send("Browser.setWindowBounds", { windowId, bounds: { windowState: "normal" } });
+      bounds = await this.bounds(cdp, windowId!);
+    }
     if (!bounds) {
       const { targetId } = await cdp.send<{ targetId: string }>("Target.createTarget", {
         url: "about:blank",
@@ -55,17 +66,31 @@ export class Chrome {
         targetId,
       }));
     }
-    if (!bounds || !centeredIn(bounds, display)) {
+    for (let attempt = 1; !bounds || !centeredIn(bounds, display); attempt++) {
+      if (attempt > PLACE_ATTEMPTS)
+        throw new Error(`Chrome kept window ${windowId} off the screen`);
+      if (attempt > 1) await new Promise((resolve) => setTimeout(resolve, PLACE_RETRY_MS));
       await cdp.send("Browser.setWindowBounds", { windowId, bounds: { windowState: "normal" } });
       await cdp.send("Browser.setWindowBounds", {
         windowId,
         bounds: { left: display.x, top: display.y, width: display.width, height: display.height },
       });
       await cdp.send("Browser.setWindowBounds", { windowId, bounds: { windowState: "maximized" } });
-    } else if (bounds.windowState !== "maximized") {
+      bounds = await this.bounds(cdp, windowId!);
+    }
+    if (bounds.windowState !== "maximized" && bounds.windowState !== "minimized") {
       await cdp.send("Browser.setWindowBounds", { windowId, bounds: { windowState: "maximized" } });
     }
     return { browserId, windowId: windowId! };
+  }
+
+  async hideWindow(window: BrowserWindow) {
+    const { cdp, browserId } = await this.connect();
+    if (window.browserId !== browserId) return;
+    await cdp.send("Browser.setWindowBounds", {
+      windowId: window.windowId,
+      bounds: { windowState: "minimized" },
+    });
   }
 
   async pageView(window: BrowserWindow): Promise<PageView | undefined> {

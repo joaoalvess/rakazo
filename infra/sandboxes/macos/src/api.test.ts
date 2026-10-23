@@ -2,6 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { ComputerAction } from "./actions.js";
 import { createApi, type ScreenService } from "./api.js";
 import { type ScreenRecord, ScreenRegistry } from "./screens.js";
 
@@ -10,6 +11,8 @@ let directory: string;
 let registry: ScreenRegistry;
 let opened: string[];
 let revoked: ScreenRecord[];
+let acted: Array<[string, ComputerAction[]]>;
+let failure: Error | undefined;
 let app: ReturnType<typeof createApi>;
 
 beforeEach(async () => {
@@ -17,6 +20,8 @@ beforeEach(async () => {
   registry = new ScreenRegistry(path.join(directory, "state.json"), 2);
   opened = [];
   revoked = [];
+  acted = [];
+  failure = undefined;
   const service: ScreenService = {
     registry,
     viewerUrl: "http://127.0.0.1:7093/embed.html",
@@ -27,6 +32,20 @@ beforeEach(async () => {
     async revokeControl(record) {
       revoked.push({ ...record });
       registry.setControl(record.key, undefined);
+    },
+    async observe(key) {
+      return {
+        image: Buffer.from(key).toString("base64"),
+        mimeType: "image/png",
+        width: 1280,
+        height: 800,
+        cursor: { x: 1, y: 2 },
+      };
+    },
+    async act(key, actions) {
+      if (failure) throw failure;
+      acted.push([key, actions]);
+      return actions.length;
     },
   };
   app = createApi(service, token);
@@ -141,6 +160,55 @@ describe("macOS screens API", () => {
       { "x-rakazo-screen-id": "screen-9" },
     );
     expect(opened).toEqual(["screen-9"]);
+  });
+
+  it("observes the bot's screen", async () => {
+    const response = await request("POST", "/computers/c1/observe");
+    expect(await response.json()).toEqual({
+      image: Buffer.from("bot-a").toString("base64"),
+      mimeType: "image/png",
+      width: 1280,
+      height: 800,
+      cursor: { x: 1, y: 2 },
+    });
+  });
+
+  it("acts on the bot's screen and answers like the Docker supervisor", async () => {
+    const actions = [
+      { kind: "pointer", x: 10, y: 20, type: "click" },
+      { kind: "clipboard", text: "oi" },
+    ];
+    const observed = await request("POST", "/computers/c1/actions", { actions, settleMs: 1 });
+    expect(await observed.json()).toMatchObject({ completed: 2, observation: { width: 1280 } });
+    const blind = await request("POST", "/computers/c1/actions", { actions, observe: false });
+    expect(await blind.json()).toEqual({ completed: 2 });
+    expect(acted).toEqual([
+      ["bot-a", actions],
+      ["bot-a", actions],
+    ]);
+    const invalid = await request("POST", "/computers/c1/actions", {
+      actions: [{ kind: "teleport" }],
+    });
+    expect(invalid.status).toBe(400);
+    failure = new Error("cua-driver click failed: window_target_not_found");
+    const failed = await request("POST", "/computers/c1/actions", { actions });
+    expect(failed.status).toBe(500);
+    expect(await failed.json()).toEqual({
+      error: "cua-driver click failed: window_target_not_found",
+    });
+  });
+
+  it("turns leased input into one action", async () => {
+    const response = await request("POST", "/computers/c1/input", {
+      input: { kind: "pointer", x: 5, y: 6 },
+      leaseId: "lease-1",
+    });
+    expect(await response.json()).toEqual({ ok: true, leaseId: "lease-1" });
+    await request("POST", "/computers/c1/input", { input: { kind: "key", key: "Return" } });
+    expect(acted.map(([, actions]) => actions)).toEqual([
+      [{ kind: "pointer", x: 5, y: 6, type: "click" }],
+      [{ kind: "key", key: "Return" }],
+    ]);
   });
 
   it("rejects an interactive request without a control token", async () => {

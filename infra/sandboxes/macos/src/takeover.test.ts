@@ -5,6 +5,7 @@ import { pageKey, TakeoverInput } from "./takeover.js";
 
 const display = { x: 1280, y: 0, width: 1280, height: 800 };
 const chromeWindow: WindowInfo = {
+  id: 1924,
   owner: "Google Chrome",
   pid: 42,
   layer: 0,
@@ -165,6 +166,7 @@ describe("TakeoverInput", () => {
 
   it("sends clicks on a window above the page to the Mac", async () => {
     const prompt: WindowInfo = {
+      id: 330,
       owner: "SecurityAgent",
       pid: 7,
       layer: 0,
@@ -183,7 +185,7 @@ describe("TakeoverInput", () => {
   });
 
   it("does not take another app's window with the same frame for the bot's page", async () => {
-    const editor = { ...chromeWindow, owner: "TextEdit", pid: 8 };
+    const editor = { ...chromeWindow, id: 568, owner: "TextEdit", pid: 8 };
     const { calls, native, send } = takeover({ windows: [editor, chromeWindow] });
     await send({ t: "p", x: 100, y: 300, m: 1 });
     expect(calls).toEqual([]);

@@ -153,17 +153,24 @@ function charKeyCode(char: string) {
   return /^[a-z0-9 ]$/i.test(char) ? char.toUpperCase().charCodeAt(0) : 0;
 }
 
-function contains(rect: Rect, x: number, y: number) {
+export function contains(rect: Rect, x: number, y: number) {
   return x >= rect.x && x < rect.x + rect.width && y >= rect.y && y < rect.y + rect.height;
 }
 
-function sameRect(a: Rect, b: Rect) {
+export function sameRect(a: Rect, b: Rect) {
   return (
     Math.abs(a.x - b.x) <= 2 &&
     Math.abs(a.y - b.y) <= 2 &&
     Math.abs(a.width - b.width) <= 2 &&
     Math.abs(a.height - b.height) <= 2
   );
+}
+
+export function onPage(page: PageView, windows: WindowInfo[] | undefined, x: number, y: number) {
+  if (!contains(page.rect, x, y)) return false;
+  if (!windows) return true;
+  const top = windows.find((window) => contains(window.bounds, x, y));
+  return top?.pid === page.pid && sameRect(top.bounds, page.window);
 }
 
 export class TakeoverInput {
@@ -324,13 +331,12 @@ export class TakeoverInput {
   private inPage(event: PointerEvent) {
     const page = this.view?.page;
     if (!page || !this.view) return false;
-    const x = this.view.display.x + event.x;
-    const y = this.view.display.y + event.y;
-    if (!contains(page.rect, x, y)) return false;
-    const windows = this.view.windows;
-    if (!windows) return true;
-    const top = windows.find((window) => contains(window.bounds, x, y));
-    return top?.pid === page.pid && sameRect(top.bounds, page.window);
+    return onPage(
+      page,
+      this.view.windows,
+      this.view.display.x + event.x,
+      this.view.display.y + event.y,
+    );
   }
 
   private modifiers() {

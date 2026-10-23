@@ -36,7 +36,8 @@ export interface DisplaydRequest {
     | "overlay"
     | "input"
     | "takeover"
-    | "windows";
+    | "windows"
+    | "raise";
   slot?: number;
   cursor?: { x: number; y: number };
   click?: { x: number; y: number };
@@ -48,6 +49,8 @@ export interface DisplaydRequest {
   format?: "png" | "jpeg";
   quality?: number;
   prompt?: boolean;
+  pid?: number;
+  window?: number;
 }
 
 export interface DisplaydResponse {
@@ -62,7 +65,9 @@ export interface DisplaydResponse {
 }
 
 export interface WindowInfo {
+  id: number;
   owner: string;
+  title?: string;
   pid: number;
   layer: number;
   bounds: Rect;

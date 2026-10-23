@@ -2,13 +2,85 @@ import { hasValidBearerToken } from "@rakazo/core";
 import { type Context, Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod";
+import type { ComputerAction, Point } from "./actions.js";
 import type { ScreenRecord, ScreenRegistry } from "./screens.js";
+
+export interface Observation {
+  image: string;
+  mimeType: "image/png" | "image/jpeg";
+  width: number;
+  height: number;
+  cursor?: Point;
+  activeWindow?: { id: string; title?: string };
+}
 
 export interface ScreenService {
   registry: ScreenRegistry;
   viewerUrl: string;
   openScreen(key: string): Promise<ScreenRecord>;
   revokeControl(record: ScreenRecord): Promise<void>;
+  observe(key: string): Promise<Observation>;
+  act(key: string, actions: ComputerAction[]): Promise<number>;
+}
+
+const pointerSchema = z.object({
+  kind: z.literal("pointer"),
+  x: z.number(),
+  y: z.number(),
+  button: z.enum(["left", "right"]).optional(),
+  type: z.enum(["move", "down", "up", "click"]),
+});
+
+const actionSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("key"), key: z.string(), modifiers: z.array(z.string()).optional() }),
+  pointerSchema,
+  z.object({ kind: z.literal("clipboard"), text: z.string() }),
+  z.object({
+    kind: z.literal("scroll"),
+    direction: z.enum(["up", "down"]),
+    amount: z.number().optional(),
+  }),
+  z.object({ kind: z.literal("wait"), ms: z.number() }),
+  z.object({ kind: z.literal("open"), path: z.string() }),
+  z.object({ kind: z.literal("launch"), application: z.string(), uri: z.string().optional() }),
+  z.object({ kind: z.literal("focus"), application: z.string(), uri: z.string().optional() }),
+]);
+
+const actionsSchema = z.object({
+  actions: z.array(actionSchema).max(24),
+  observe: z.boolean().optional(),
+  settleMs: z.number().min(0).max(5_000).optional(),
+});
+
+const inputSchema = z.object({
+  input: z.object({
+    kind: z.enum(["key", "pointer", "clipboard"]),
+    key: z.string().optional(),
+    modifiers: z.array(z.string()).optional(),
+    x: z.number().optional(),
+    y: z.number().optional(),
+    button: z.enum(["left", "right"]).optional(),
+    type: z.enum(["move", "down", "up", "click"]).optional(),
+    text: z.string().optional(),
+  }),
+  leaseId: z.string().optional(),
+});
+
+function inputAction(input: z.infer<typeof inputSchema>["input"]): ComputerAction {
+  if (input.kind === "key")
+    return { kind: "key", key: input.key ?? "", modifiers: input.modifiers };
+  if (input.kind === "clipboard") return { kind: "clipboard", text: input.text ?? "" };
+  return {
+    kind: "pointer",
+    x: input.x ?? 0,
+    y: input.y ?? 0,
+    button: input.button,
+    type: input.type ?? "click",
+  };
+}
+
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
 }
 
 const screenModeSchema = z
@@ -78,6 +150,40 @@ export function createApi(service: ScreenService, supervisorToken: string) {
       return c.json({ screenUrl: screenUrlWithToken(service.viewerUrl, record.viewToken) });
     } catch (error) {
       return c.json({ error: error instanceof Error ? error.message : String(error) }, 400);
+    }
+  });
+
+  app.post("/computers/:id/observe", async (c) => {
+    try {
+      return c.json(await service.observe(screenKey(c, c.req.param("id"))));
+    } catch (error) {
+      return c.json({ error: errorMessage(error) }, 500);
+    }
+  });
+
+  app.post("/computers/:id/actions", async (c) => {
+    const parsed = actionsSchema.safeParse(await c.req.json().catch(() => undefined));
+    if (!parsed.success) return c.json({ error: "invalid computer actions" }, 400);
+    const body = parsed.data;
+    const key = screenKey(c, c.req.param("id"));
+    try {
+      const completed = await service.act(key, body.actions);
+      if (body.observe === false) return c.json({ completed });
+      if (body.settleMs) await new Promise((resolve) => setTimeout(resolve, body.settleMs));
+      return c.json({ completed, observation: await service.observe(key) });
+    } catch (error) {
+      return c.json({ error: errorMessage(error) }, 500);
+    }
+  });
+
+  app.post("/computers/:id/input", async (c) => {
+    const parsed = inputSchema.safeParse(await c.req.json().catch(() => undefined));
+    if (!parsed.success) return c.json({ ok: false, error: "invalid computer input" }, 400);
+    try {
+      await service.act(screenKey(c, c.req.param("id")), [inputAction(parsed.data.input)]);
+      return c.json({ ok: true, leaseId: parsed.data.leaseId ?? null });
+    } catch (error) {
+      return c.json({ ok: false, error: errorMessage(error) }, 500);
     }
   });
 
