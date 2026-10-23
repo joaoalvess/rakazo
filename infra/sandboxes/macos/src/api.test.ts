@@ -14,6 +14,7 @@ let opened: string[];
 let revoked: ScreenRecord[];
 let acted: Array<[string, ComputerAction[]]>;
 let browsed: Array<[string, PageBrowserCommand]>;
+let woken: string[];
 let failure: Error | undefined;
 let app: ReturnType<typeof createApi>;
 
@@ -24,6 +25,7 @@ beforeEach(async () => {
   revoked = [];
   acted = [];
   browsed = [];
+  woken = [];
   failure = undefined;
   const service: ScreenService = {
     registry,
@@ -54,6 +56,10 @@ beforeEach(async () => {
       if (failure) throw failure;
       browsed.push([key, command]);
       return { ok: true, url: "https://example.com/" };
+    },
+    async wake(key) {
+      if (failure) throw failure;
+      woken.push(key);
     },
   };
   app = createApi(service, token);
@@ -247,6 +253,18 @@ describe("macOS screens API", () => {
       uncertain: false,
       error: "the bot's browser window is not available",
     });
+  });
+
+  it("wakes an allocated screen and refuses one that is not", async () => {
+    const missing = await request("POST", "/computers/c1/screen/wake");
+    expect(missing.status).toBe(404);
+    await registry.allocate("bot-a");
+    const response = await request("POST", "/computers/c1/screen/wake");
+    expect(await response.json()).toEqual({ ok: true });
+    expect(woken).toEqual(["bot-a"]);
+    failure = new Error("screen 0 is not open");
+    const failed = await request("POST", "/computers/c1/screen/wake");
+    expect(failed.status).toBe(500);
   });
 
   it("turns leased input into one action", async () => {

@@ -30,6 +30,7 @@ let calls: string[];
 let nextWindow: number;
 let offscreenMoves: number;
 let minimized: Set<number>;
+let lifecycle: Map<string, string>;
 
 function handle(method: string, params: Record<string, unknown>, sessionId?: string) {
   calls.push(method);
@@ -57,6 +58,9 @@ function handle(method: string, params: Record<string, unknown>, sessionId?: str
       if (bounds.windowState === "minimized") {
         minimized.add(params.windowId as number);
       } else if (minimized.delete(params.windowId as number)) {
+        for (const target of targets) {
+          if (target.windowId === params.windowId) target.visible = true;
+        }
         if (bounds.windowState !== "normal") Object.assign(window, bounds);
       } else if (bounds.left !== undefined && offscreenMoves > 0) {
         offscreenMoves--;
@@ -76,6 +80,11 @@ function handle(method: string, params: Record<string, unknown>, sessionId?: str
     }
     case "Target.getTargets":
       return { targetInfos: targets.map(({ targetId }) => ({ targetId, type: "page" })) };
+    case "Page.setWebLifecycleState": {
+      const target = targets.find((candidate) => `s-${candidate.targetId}` === sessionId)!;
+      lifecycle.set(target.targetId, params.state as string);
+      return {};
+    }
     case "Target.attachToTarget":
       return { sessionId: `s-${params.targetId}` };
     case "Runtime.evaluate": {
@@ -119,6 +128,7 @@ beforeEach(async () => {
   nextWindow = 1;
   offscreenMoves = 0;
   minimized = new Set();
+  lifecycle = new Map();
   sockets = new WebSocketServer({ noServer: true });
   server = http.createServer((_request, response) => {
     const { port } = server.address() as AddressInfo;
@@ -215,6 +225,15 @@ describe("Chrome", () => {
     expect(await chrome.pageView(window)).toBeDefined();
   });
 
+  it("brings back a window whose pages Chrome hid without minimizing it", async () => {
+    const window = await chrome.placeWindow(undefined, display);
+    targets[0]!.visible = false;
+    calls = [];
+    await chrome.placeWindow(window, display, true);
+    expect(calls.filter((call) => call === "Browser.setWindowBounds")).toHaveLength(2);
+    expect(windows.get(1)?.windowState).toBe("maximized");
+  });
+
   it("opens a new window when the window is gone or Chrome restarted", async () => {
     const window = await chrome.placeWindow(undefined, display);
     windows.delete(1);
@@ -235,6 +254,18 @@ describe("Chrome", () => {
     expect(view?.window).toEqual({ x: 1280, y: 30, width: 1280, height: 770 });
     expect(view?.pid).toBe(4242);
     expect(await chrome.pageView({ browserId: "browser-0", windowId: 1 })).toBeUndefined();
+  });
+
+  it("freezes and thaws only the pages of a bot's window", async () => {
+    const window = await chrome.placeWindow(undefined, display);
+    targets.push({ targetId: "second-tab", windowId: 1, visible: false });
+    targets.push({ targetId: "other-bot", windowId: 9, visible: true });
+    await chrome.freezeWindow(window, true);
+    expect(Object.fromEntries(lifecycle)).toEqual({ t1: "frozen", "second-tab": "frozen" });
+    await chrome.freezeWindow(window, false);
+    expect(Object.fromEntries(lifecycle)).toEqual({ t1: "active", "second-tab": "active" });
+    await chrome.freezeWindow({ browserId: "browser-0", windowId: 1 }, true);
+    expect(lifecycle.get("t1")).toBe("active");
   });
 
   it("closes only the pages of a bot's window", async () => {

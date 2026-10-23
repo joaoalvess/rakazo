@@ -12,8 +12,9 @@ import { createApi, type ScreenService } from "./api.js";
 import { Chrome } from "./chrome.js";
 import { DisplaydClient, type Rect } from "./displayd.js";
 import { CuaDriver } from "./driver.js";
-import { ScreenFeeds } from "./feed.js";
+import { ScreenFeeds, stillFrame } from "./feed.js";
 import { ControlInput } from "./input.js";
+import { ScreenLifecycle } from "./lifecycle.js";
 import { PageBrowser } from "./page-browser.js";
 import {
   resolveScreenLimit,
@@ -162,7 +163,50 @@ export async function startMacScreens() {
     return current;
   };
 
+  const hiddenWhileAsleep = new Set<string>();
+  const lifecycle = new ScreenLifecycle(registry, {
+    viewers: (slot) => feeds.viewers(slot),
+    async sleep(record) {
+      const shot = await displayd.call({
+        op: "screenshot",
+        slot: record.slot,
+        format: "jpeg",
+        quality: 0.7,
+      });
+      if (!shot.image) throw new Error("displayd returned no screenshot");
+      feeds.sleep(
+        record.slot,
+        stillFrame(Buffer.from(shot.image, "base64"), SCREEN_WIDTH, SCREEN_HEIGHT),
+      );
+      await displayd.call({ op: "sleep", slot: record.slot });
+      if (record.browser) {
+        if (await chrome.pageView(record.browser)) {
+          await chrome.hideWindow(record.browser);
+          hiddenWhileAsleep.add(record.key);
+        }
+        await chrome.freezeWindow(record.browser, true);
+      }
+      logger.info("screen asleep", { screen: record.key, slot: record.slot });
+    },
+    async wake(record) {
+      const { screen } = await displayd.call({ op: "wake", slot: record.slot });
+      if (record.browser) {
+        await chrome.freezeWindow(record.browser, false);
+        if (hiddenWhileAsleep.delete(record.key) && screen) {
+          await placeBrowser(record, screen.bounds, true);
+        }
+      }
+      feeds.wake(record.slot);
+      logger.info("screen awake", { screen: record.key, slot: record.slot });
+    },
+    onError: (record, error) =>
+      logger.warn("screen failed to sleep", { screen: record.key, reason: error.message }),
+  });
+  lifecycle.start();
+
   const closeScreen = async (record: ScreenRecord) => {
+    lifecycle.forget(record.key);
+    hiddenWhileAsleep.delete(record.key);
     computers.delete(record.key);
     viewer.revoke((grant) => grant.screenKey === record.key);
     feeds.close(record.slot);
@@ -176,6 +220,7 @@ export async function startMacScreens() {
       logger.info("screen evicted", { screen: evicted.key, slot: evicted.slot });
       await closeScreen(evicted);
     }
+    await lifecycle.wake(key);
     const { screen } = await displayd.call({ op: "open", slot: record.slot });
     if (screen) await placeBrowser(record, screen.bounds);
     return record;
@@ -212,6 +257,9 @@ export async function startMacScreens() {
         return pageBrowser.run(command, window.windowId, signal);
       });
     },
+    async wake(key) {
+      await openScreen(key);
+    },
     async revokeControl(record) {
       registry.setControl(record.key, undefined);
       viewer.revoke((grant) => grant.screenKey === record.key && grant.control);
@@ -234,6 +282,7 @@ export async function startMacScreens() {
     });
   });
   const shutdown = async () => {
+    lifecycle.stop();
     chrome.close();
     await viewer.close();
     await logger.flush({ timeoutMs: 2_000 });

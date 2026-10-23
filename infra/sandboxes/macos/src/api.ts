@@ -23,6 +23,7 @@ export interface ScreenService {
   observe(key: string): Promise<Observation>;
   act(key: string, actions: ComputerAction[]): Promise<number>;
   browser(key: string, command: PageBrowserCommand, signal?: AbortSignal): Promise<unknown>;
+  wake(key: string): Promise<void>;
 }
 
 const pointerSchema = z.object({
@@ -245,6 +246,17 @@ export function createApi(service: ScreenService, supervisorToken: string) {
       return c.json({ ok: true, leaseId: parsed.data.leaseId ?? null });
     } catch (error) {
       return c.json({ ok: false, error: errorMessage(error) }, 500);
+    }
+  });
+
+  app.post("/computers/:id/screen/wake", async (c) => {
+    const key = screenKey(c, c.req.param("id"));
+    if (!service.registry.get(key)) return c.json({ error: "screen is not allocated" }, 404);
+    try {
+      await service.wake(key);
+      return c.json({ ok: true });
+    } catch (error) {
+      return c.json({ error: errorMessage(error) }, 500);
     }
   });
 

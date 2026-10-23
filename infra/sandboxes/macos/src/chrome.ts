@@ -93,6 +93,18 @@ export class Chrome {
     });
   }
 
+  async freezeWindow(window: BrowserWindow, frozen: boolean) {
+    const { cdp, browserId } = await this.connect();
+    if (window.browserId !== browserId) return;
+    for (const { targetId } of await this.pagesIn(cdp, window.windowId)) {
+      await cdp.send(
+        "Page.setWebLifecycleState",
+        { state: frozen ? "frozen" : "active" },
+        await this.session(cdp, targetId),
+      );
+    }
+  }
+
   async pageView(window: BrowserWindow): Promise<PageView | undefined> {
     const { cdp, browserId, pid } = await this.connect();
     if (window.browserId !== browserId) return undefined;
@@ -115,6 +127,7 @@ export class Chrome {
   }
 
   private async restore(cdp: CdpConnection, windowId: number, pid: number) {
+    await cdp.send("Browser.setWindowBounds", { windowId, bounds: { windowState: "minimized" } });
     await cdp.send("Browser.setWindowBounds", { windowId, bounds: { windowState: "normal" } });
     for (let attempt = 1; attempt < PLACE_ATTEMPTS; attempt++) {
       if (await this.visiblePage(cdp, windowId, pid)) return;
