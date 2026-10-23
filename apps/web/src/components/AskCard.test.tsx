@@ -314,3 +314,28 @@ it("keeps a connector code card open to others in the chat, without Dismiss", as
   expect(button("Save")).toBeDefined();
   expect(button("Dismiss")).toBeUndefined();
 });
+
+it("marks an approval for a step on the computer", async () => {
+  const onAnswer = vi.fn(async () => undefined);
+  await render(
+    {
+      kind: "ask",
+      approvalEffectId: "effect-1",
+      text: "Pagar R$ 59,90 na loja",
+      source: "computer",
+      status: "pending",
+      actions: [
+        { id: "allow", label: "Allow once" },
+        { id: "deny", label: "Deny" },
+      ],
+    },
+    undefined,
+    onAnswer,
+  );
+  expect(container.textContent).toContain("Computer");
+  expect(button("Always allow this tool")).toBeUndefined();
+
+  await act(async () => button("Allow once")!.click());
+
+  expect(onAnswer).toHaveBeenCalledWith("allow", undefined);
+});

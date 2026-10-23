@@ -1273,6 +1273,7 @@ msgstr "Compact"
 msgid "Complete"
 msgstr "Voltooid"
 
+#: src/components/AskCard.tsx
 #: src/pages/SettingsOverlay.tsx
 #: src/pages/shell/bot-panel.tsx
 #: src/pages/shell/message-view.tsx

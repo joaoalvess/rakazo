@@ -178,6 +178,11 @@ export function AskCard({
       }
       className={`w-full min-w-0 ${secretInput ? "" : "max-w-xl "}rounded-2xl border border-border bg-card px-5 py-4`}
     >
+      {block.source === "computer" ? (
+        <div className="mb-2 inline-flex rounded-full bg-muted px-2.5 py-0.5 text-[12.5px] text-muted-foreground">
+          <Trans>Computer</Trans>
+        </div>
+      ) : null}
       <div className="text-[15.5px] leading-[1.5] text-foreground">
         {block.instructionUpdate ? (
           <Trans>Update instructions?</Trans>

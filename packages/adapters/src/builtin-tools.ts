@@ -435,6 +435,19 @@ export const builtinAgentTools: ConnectorTool[] = [
     },
   },
   {
+    name: "confirm_computer_action",
+    description:
+      "Ask the user to approve one action on the computer and wait for their answer. Call it right before you pay, buy, send, delete, publish, or submit anything on the screen or in the browser, describing exactly what will happen; go ahead only if they allow it.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        action: { type: "string", minLength: 1, maxLength: 240 },
+        detail: { type: "string", maxLength: 2000 },
+      },
+      required: ["action"],
+    },
+  },
+  {
     name: "connect_app",
     description:
       "Show an inline card to connect an app in this chat when you need an unconnected app or the user asks to connect one. Then wait for the user instead of directing them elsewhere.",

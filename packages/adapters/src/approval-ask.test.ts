@@ -22,6 +22,28 @@ describe("buildApprovalAskBlock", () => {
     expect(JSON.stringify(block)).not.toContain("token-secret");
   });
 
+  it("asks once before an action on the computer, marked as a computer step", () => {
+    const block = buildApprovalAskBlock(
+      "effect-1",
+      "confirm_computer_action",
+      { action: "Pay R$ 59,90 with card 4242", detail: "Order 4242 at the store" },
+      ["4242"],
+    );
+
+    expect(block).toEqual({
+      kind: "ask",
+      approvalEffectId: "effect-1",
+      text: "Pay R$ 59,90 with card [redacted]",
+      detail: "Order [redacted] at the store",
+      source: "computer",
+      status: "pending",
+      actions: [
+        { id: "allow", label: "Allow once" },
+        { id: "deny", label: "Deny" },
+      ],
+    });
+  });
+
   it("bounds model-controlled summaries and details", () => {
     const block = buildApprovalAskBlock(
       "effect-1",

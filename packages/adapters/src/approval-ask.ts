@@ -46,6 +46,24 @@ export function buildApprovalAskBlock(
       ],
     };
   }
+  if (toolName === "confirm_computer_action") {
+    const detail = args.detail ? redactSecrets(String(args.detail), secrets) : undefined;
+    return {
+      kind: "ask",
+      approvalEffectId: effectId,
+      text: truncate(
+        redactSecrets(String(args.action ?? ""), secrets),
+        MAX_APPROVAL_SUMMARY_LENGTH,
+      ),
+      detail: detail ? truncate(detail, MAX_APPROVAL_DETAIL_LENGTH) : undefined,
+      source: "computer",
+      status: "pending",
+      actions: [
+        { id: "allow", label: "Allow once" },
+        { id: "deny", label: "Deny" },
+      ],
+    };
+  }
   if (toolName === "propose_instructions_update") {
     const before = redactSecrets(String(args.previousInstructions ?? ""), secrets);
     const after = redactSecrets(String(args.instructions ?? ""), secrets);

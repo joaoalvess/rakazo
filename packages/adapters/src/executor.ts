@@ -7024,6 +7024,12 @@ export function createRunExecutor(deps: ExecutorDeps) {
             return pauseForSecret();
           }
           if (name === "request_takeover") return { ok: true };
+          if (name === "confirm_computer_action") {
+            if (!claimedEffect) {
+              return finish({ error: "Computer actions need the user's approval." });
+            }
+            return finish({ approved: true });
+          }
           if (name === "run_subagent") {
             return {
               ok: true,
@@ -8989,6 +8995,9 @@ export function selectBuiltinToolsForRun(options: {
       !disabled.has(tool.name) &&
       (!FLEET_TOOL_NAMES_SET.has(tool.name) ||
         (Boolean(options.fleetManagement) && fleetToolsAllowed)) &&
+      (options.graphicalToolsAllowed ||
+        options.pageBrowserAllowed ||
+        !SCREEN_REQUEST_TOOL_NAMES.has(tool.name)) &&
       (options.mediaImagesEnabled || tool.name !== "generate_image") &&
       (options.mediaVideoEnabled || tool.name !== "generate_video") &&
       (options.ticketBoardEnabled ||
@@ -9026,6 +9035,8 @@ export function selectBuiltinToolsForRun(options: {
           !tool.name.startsWith("ticket_"))),
   );
 }
+
+const SCREEN_REQUEST_TOOL_NAMES = new Set(["confirm_computer_action"]);
 
 export const PAGE_BROWSER_TOOL_NAMES = new Set([
   "browser_navigate",

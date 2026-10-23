@@ -30,6 +30,7 @@ export const BUILTIN_TOOL_NAMES = [
   "open_path",
   "launch_app",
   "request_takeover",
+  "confirm_computer_action",
   "ask_user",
   "connect_app",
   "message_user",

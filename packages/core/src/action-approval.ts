@@ -39,6 +39,7 @@ const APPROVAL_REQUIRED_BUILTIN_TOOLS = new Set([
   "cloud_agent_cancel",
 ]);
 const EXPLICIT_APPROVAL_BUILTIN_TOOLS = new Set([
+  "confirm_computer_action",
   "create_space",
   "propose_instructions_update",
   "create_group",
@@ -175,6 +176,7 @@ export function unattendedTriggerToolRequiresApproval(
  */
 const OWN_STATE_RESULT_TOOLS = new Set([
   "ask_user",
+  "confirm_computer_action",
   "connect_app",
   "attach_file",
   "end_call",

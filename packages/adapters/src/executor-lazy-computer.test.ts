@@ -412,7 +412,13 @@ describe("run computer provisioning", () => {
       const { runtimeRun } = await runRoutine([], { native: true, screens });
       const request = runtimeRun.mock.calls[0]![0];
       const tools = request.tools.map((tool) => tool.name);
-      const screenTools = ["computer_observe", "computer_act", "browser_navigate", "browser_act"];
+      const screenTools = [
+        "computer_observe",
+        "computer_act",
+        "browser_navigate",
+        "browser_act",
+        "confirm_computer_action",
+      ];
       if (screens) expect(tools).toEqual(expect.arrayContaining(screenTools));
       else for (const name of screenTools) expect(tools).not.toContain(name);
       expect(request.instructions.includes("graphical screen control is unavailable")).toBe(
