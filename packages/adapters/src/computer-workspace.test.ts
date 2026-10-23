@@ -111,6 +111,30 @@ describe("provider-neutral computer workspace", () => {
   });
 });
 
+describe("desktop computer homes", () => {
+  it("never writes a checkpoint over a desktop home that is still on disk", async () => {
+    const importWorkspace = vi.fn();
+    const exportHome = vi.fn();
+    const desktop = { id: "desktop-bot-1", botId: "bot-1", kind: "desktop" as const };
+    await restoreComputerWorkspace(
+      { exportHome } as never,
+      { importWorkspace } as never,
+      "bot-1",
+      { ...desktop, providerRef: "/data/desktop-computers/bot-1", fresh: false },
+      context,
+    );
+    expect(importWorkspace).not.toHaveBeenCalled();
+    await restoreComputerWorkspace(
+      { exportHome } as never,
+      { importWorkspace } as never,
+      "bot-1",
+      { ...desktop, providerRef: "/data/desktop-computers/bot-1", fresh: true },
+      context,
+    );
+    expect(importWorkspace).toHaveBeenCalledOnce();
+  });
+});
+
 describe("Team run checkpoints", () => {
   it("defers a remote export when another run prevents an exclusive checkpoint", async () => {
     const { checkpointRunComputerWorkspace } = await import("./computer-workspace.js");

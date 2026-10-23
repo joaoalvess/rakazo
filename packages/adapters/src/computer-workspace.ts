@@ -83,6 +83,7 @@ export async function restoreComputerWorkspace(
   context: AdapterContext,
 ): Promise<void> {
   if (computer.kind === "docker" && home instanceof LocalAgentHomeStore) return;
+  if (computer.kind === "desktop" && computer.fresh === false) return;
   await sandbox.importWorkspace(computer, home.exportHome(homeKey, context), context);
 }
 
