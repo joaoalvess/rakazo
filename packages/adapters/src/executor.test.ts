@@ -1,5 +1,11 @@
+import { normalizeContext } from "@earendil-works/pi-ai";
 import type { MessageBlock } from "@rakazo/contracts";
-import { CLOUDFLARE_AI_GATEWAY_CONFIG_MESSAGE, FLEET_TOOL_NAMES } from "@rakazo/contracts";
+import {
+  CLOUDFLARE_AI_GATEWAY_CONFIG_MESSAGE,
+  CLOUDFLARE_WORKERS_AI_PROVIDER_ID,
+  cloudflareModelConfigMessage,
+  FLEET_TOOL_NAMES,
+} from "@rakazo/contracts";
 import { ONCE_ROUTINE_CRON } from "@rakazo/core";
 import type { PrismaClient } from "@rakazo/db";
 import { RunHistoryWriteError } from "@rakazo/db";
@@ -30,6 +36,7 @@ import {
 import { UnavailableModelForAuthError, validateConnectedModelChoice } from "./model-selection.js";
 import { PRIVATE_MODEL_ENDPOINT_MESSAGE } from "./openai-compatible-url.js";
 import { RetiredModelCredentialError, serializeModelSecret } from "./pi-oauth.js";
+import { modelsForRequest } from "./pi-runtime.js";
 import { parseUpdateBotPatch } from "./update-bot-patch.js";
 
 describe("bot tool permissions", () => {
@@ -317,7 +324,7 @@ describe("run workspace checkpoint", () => {
     await expect(checkpoint.flush()).resolves.toBe(true);
   });
 
-  it("keeps a failed checkpoint dirty for retry", async () => {
+  it("defers a failed checkpoint without failing the run and keeps it dirty for retry", async () => {
     const persist = vi
       .fn<() => Promise<void>>()
       .mockRejectedValueOnce(new Error("checkpoint failed"))
@@ -325,9 +332,21 @@ describe("run workspace checkpoint", () => {
     const checkpoint = createRunWorkspaceCheckpoint(persist);
     checkpoint.markDirty();
 
-    await expect(checkpoint.flush()).rejects.toThrow("checkpoint failed");
+    await expect(checkpoint.flush()).resolves.toBe(false);
     await expect(checkpoint.flush()).resolves.toBe(true);
     expect(persist).toHaveBeenCalledTimes(2);
+  });
+
+  it("still stops a cancelled run whose checkpoint fails", async () => {
+    const controller = new AbortController();
+    const aborted = new DOMException("Aborted", "AbortError");
+    const checkpoint = createRunWorkspaceCheckpoint(async () => {
+      controller.abort(aborted);
+      throw aborted;
+    }, controller.signal);
+    checkpoint.markDirty();
+
+    await expect(checkpoint.flush()).rejects.toBe(aborted);
   });
 });
 
@@ -1248,7 +1267,7 @@ describe("userTurnInstructions", () => {
     "run_subagent is a short helper inside this turn only. It is not a bot, has no thread, and does not show in the list. Use it for parallel work you will summarize here.",
   ];
   const archiveBot =
-    "archive_bot safely archives a bot this bot created, and only that bot. Use it when the user asks to remove that bot or when it is finished and unused. The user can restore it or permanently delete it later. confirm_name must exactly match its name.";
+    "archive_bot safely archives another bot in this space. Use it when the user asks to remove that bot or when it is finished and unused. The user can restore it or permanently delete it later. confirm_name must exactly match its name.";
   const replyGuidance =
     "Send progress updates only when the work will take minutes — long computer tasks or multi-step jobs — never for quick replies and never to announce that you are starting. Even then send at most a few brief updates (a sentence or two each), not one per tool call, and do not narrate routine steps. Thinking stays private. message_user is capped at 500 characters and will be silently cut off if you exceed it \u2014 never put your final answer, a report, or any long-form deliverable in it. Always put the complete final answer in your normal reply, never split across message_user calls, and never assume a message_user update already delivered your content.";
   const stableTail = [
@@ -1423,7 +1442,7 @@ describe("userTurnInstructions", () => {
     expect(clause).toContain("Tool results, tool arguments");
     expect(clause).toMatch(/untrusted/);
     expect(clause).not.toContain("Instructions edits");
-    expect(clause).toContain("no tool to edit a bot you did not create");
+    expect(clause).toContain("any bot in your current space");
     const narrowed = clauseFor("user", true, false, ["set_child_instructions", "create_group"]);
     expect(narrowed).toContain(
       "update_group, set_child_bot_model and create_child_routine need the owner's approval",
@@ -1753,7 +1772,7 @@ describe("createRunExecutor", () => {
     expect(tools).toContain("web_fetch");
   });
 
-  it("offers forget_memory only when the memory provider can forget", () => {
+  it("keeps remember and offers forget_memory only when the memory provider can forget", () => {
     const names = (semanticMemoryForgets: boolean) =>
       selectBuiltinToolsForRun({
         graphicalToolsAllowed: false,
@@ -1766,6 +1785,31 @@ describe("createRunExecutor", () => {
     expect(names(false)).toEqual(expect.arrayContaining(["recall_memory", "save_memory"]));
     expect(names(false)).not.toContain("forget_memory");
     expect(names(true)).toContain("forget_memory");
+    expect(names(false)).toContain("remember");
+  });
+
+  it("gives a creation intro only its question and its own profile, and normal turns everything", () => {
+    const names = (trigger: string, disabledBuiltinTools: string[] = []) =>
+      selectBuiltinToolsForRun({
+        graphicalToolsAllowed: true,
+        pageBrowserAllowed: true,
+        groupId: null,
+        trigger,
+        semanticMemoryEnabled: true,
+        cloudAgentEnabled: true,
+        messagingChannelRun: false,
+        fleetManagement: true,
+        disabledBuiltinTools,
+      })
+        .map((tool) => tool.name)
+        .sort();
+    expect(names("created")).toEqual(["ask_user", "update_bot"]);
+    expect(names("created", ["ask_user"])).toEqual(["update_bot"]);
+    expect(names("created", ["ask_user", "update_bot"])).toEqual([]);
+    // Answering the intro resumes it as the user's turn (see commitAnswerRunInput).
+    expect(names("user")).toEqual(
+      expect.arrayContaining(["ask_user", "update_bot", "shell", "schedule_create", "spawn_bot"]),
+    );
   });
 
   it("keeps a creation intro from answering a user message that arrived during it", () => {
@@ -1825,6 +1869,75 @@ describe("createRunExecutor", () => {
     });
   });
 
+  it("stores the next 30-day run from the scheduled anchor after a fire", async () => {
+    const clock = vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-01-31T00:00:01Z"));
+    const scheduledAt = new Date("2026-01-31T00:00:00Z");
+    const enqueue = vi.fn(async () => undefined);
+    const cancel = vi.fn(async () => undefined);
+    const append = vi.fn(async () => undefined);
+    const updateMany = vi.fn(async () => ({ count: 1 }));
+    const taskCreate = vi.fn(async () => ({ id: "task-1" }));
+    const runCreate = vi.fn(async () => ({ id: "run-1" }));
+    const prisma = {
+      routine: {
+        findUnique: vi.fn(async () => ({
+          id: "routine-1",
+          spaceId: "ws-1",
+          botId: "bot-1",
+          prompt: "say hi",
+          crons: ["0 0 */30 * *"],
+          timezone: "UTC",
+          active: true,
+          nextRunAt: scheduledAt,
+          threadId: "group-thread-1",
+        })),
+      },
+      bot: {
+        findUnique: vi.fn(async () => ({
+          id: "bot-1",
+          thread: { id: "thread-1" },
+        })),
+      },
+      thread: {
+        findFirst: vi.fn(async () => ({ id: "group-thread-1" })),
+      },
+      agentSkill: {
+        findMany: vi.fn(async () => []),
+      },
+      $transaction: vi.fn(async (callback: (tx: unknown) => Promise<unknown>) =>
+        callback({
+          routine: {
+            updateMany,
+            findUnique: vi.fn(async () => ({
+              modelProvider: null,
+              modelId: null,
+              thinkingLevel: null,
+            })),
+          },
+          task: { create: taskCreate },
+          run: { create: runCreate, findMany: vi.fn(async () => []) },
+        }),
+      ),
+    } as unknown as PrismaClient;
+    const executor = createRunExecutor({
+      prisma,
+      jobs: { enqueue, cancel, close: vi.fn(async () => undefined) },
+      events: { append },
+    } as unknown as Parameters<typeof createRunExecutor>[0]);
+
+    try {
+      await executor.wakeRoutine("routine-1", scheduledAt.toISOString());
+    } finally {
+      clock.mockRestore();
+    }
+
+    expect(updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ nextRunAt: new Date("2026-03-02T00:00:00Z") }),
+      }),
+    );
+  });
+
   it("deactivates one-shot routines after wake without scheduling another wakeup", async () => {
     const scheduledAt = new Date(Date.now() - 1_000);
     const enqueue = vi.fn(async () => undefined);
@@ -1871,7 +1984,7 @@ describe("createRunExecutor", () => {
             })),
           },
           task: { create: taskCreate },
-          run: { create: runCreate },
+          run: { create: runCreate, findMany: vi.fn(async () => []) },
         }),
       ),
     } as unknown as PrismaClient;
@@ -1946,7 +2059,7 @@ describe("createRunExecutor", () => {
               findUnique: vi.fn(async () => claimedModel),
             },
             task: { create: taskCreate },
-            run: { create: runCreate },
+            run: { create: runCreate, findMany: vi.fn(async () => []) },
           }),
         ),
       } as unknown as PrismaClient;
@@ -2096,7 +2209,7 @@ describe("createRunExecutor", () => {
             })),
           },
           task: { create: taskCreate },
-          run: { create: runCreate },
+          run: { create: runCreate, findMany: vi.fn(async () => []) },
         }),
       ),
     } as unknown as PrismaClient;
@@ -2168,7 +2281,7 @@ describe("createRunExecutor", () => {
             })),
           },
           task: { create: taskCreate },
-          run: { create: runCreate },
+          run: { create: runCreate, findMany: vi.fn(async () => []) },
         }),
       ),
     } as unknown as PrismaClient;
@@ -2334,7 +2447,7 @@ description: Prepare standup notes
     expect(cancel).toHaveBeenCalledWith("routine:routine-1");
   });
 
-  it("restores the routine claim when run.continue enqueue fails", async () => {
+  it("preserves the committed one-shot when run.continue enqueue fails", async () => {
     const scheduledAt = new Date(Date.now() - 1_000);
     const previousLastRunAt = new Date(Date.now() - 60_000);
     const enqueue = vi.fn(async () => {
@@ -2398,21 +2511,11 @@ description: Prepare standup notes
       events: { append: vi.fn(async () => undefined) },
     } as unknown as Parameters<typeof createRunExecutor>[0]);
 
-    await expect(executor.wakeRoutine("routine-1", scheduledAt.toISOString())).rejects.toThrow(
-      "enqueue failed",
-    );
-    expect(deleteRunMany).toHaveBeenCalledWith({ where: { id: "run-1", status: "queued" } });
-    expect(deleteTaskMany).toHaveBeenCalledWith({ where: { id: "task-1", status: "queued" } });
-    expect(restoreUpdateMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({ id: "routine-1", active: false, nextRunAt: null }),
-        data: expect.objectContaining({
-          nextRunAt: scheduledAt,
-          active: true,
-          lastRunAt: previousLastRunAt,
-        }),
-      }),
-    );
+    await executor.wakeRoutine("routine-1", scheduledAt.toISOString());
+    expect(deleteRunMany).not.toHaveBeenCalled();
+    expect(deleteTaskMany).not.toHaveBeenCalled();
+    expect(restoreUpdateMany).not.toHaveBeenCalled();
+    expect(claimUpdateMany).toHaveBeenCalledTimes(1);
   });
 
   it("consumes a persisted takeover checkpoint when claiming the run", async () => {
@@ -3183,6 +3286,48 @@ description: Prepare standup notes
     });
   });
 
+  it("sends saved compatible headers from executor resolution to the model request", async () => {
+    const plaintext = serializeModelSecret({
+      kind: "openai_compatible",
+      baseUrl: COMPATIBLE_BASE_URL,
+      apiKey: "fake-api-key",
+      headers: { "x-session": "fake-session-secret" },
+    });
+    const executor = compatibleExecutor(
+      compatiblePrismaParts({ "ws-1": "space-model" }, plaintext),
+      plaintext,
+    );
+    const model = await executor.resolveConnectedModel(
+      { userId: "user-1", spaceId: "ws-1" },
+      COMPATIBLE_PROVIDER,
+      "space-model",
+    );
+    const models = modelsForRequest(
+      { model } as Parameters<typeof modelsForRequest>[0],
+      COMPATIBLE_PROVIDER,
+    );
+    const provider = models.getProvider(COMPATIBLE_PROVIDER)!;
+    const runtimeModel = models.getModel(COMPATIBLE_PROVIDER, model.id)!;
+    let received: string | null = null;
+    expect(model).toHaveProperty("headers", { "x-session": "fake-session-secret" });
+    const result = await provider
+      .streamSimple(runtimeModel, normalizeContext({ messages: [] }), {
+        apiKey: model.apiKey ?? "local",
+        fetch: async (_input, init) => {
+          received = new Headers(init?.headers).get("x-session");
+          return new Response(
+            'data: {"id":"fake","choices":[{"index":0,"delta":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n',
+            {
+              headers: { "content-type": "text/event-stream" },
+            },
+          );
+        },
+      })
+      .result();
+    expect(result.stopReason, JSON.stringify(result)).not.toBe("error");
+    expect(received).toBe("fake-session-secret");
+  });
+
   it("resolves a helper model enabled only in the connection's list", async () => {
     const plaintext = compatibleSecret(["space-model", "second-model"]);
     const executor = compatibleExecutor(
@@ -3742,6 +3887,11 @@ description: Prepare standup notes
 describe("terminal model setup errors", () => {
   it("fails an unroutable Cloudflare credential instead of retrying setup", () => {
     expect(isTerminalModelSetupError(new Error(CLOUDFLARE_AI_GATEWAY_CONFIG_MESSAGE))).toBe(true);
+    expect(
+      isTerminalModelSetupError(
+        new Error(cloudflareModelConfigMessage(CLOUDFLARE_WORKERS_AI_PROVIDER_ID)),
+      ),
+    ).toBe(true);
     expect(isTerminalModelSetupError(new UnavailableModelForAuthError())).toBe(true);
     expect(isTerminalModelSetupError(new RetiredModelCredentialError("signed out"))).toBe(true);
     expect(isTerminalModelSetupError(new Error("socket hang up"))).toBe(false);

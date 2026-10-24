@@ -129,6 +129,7 @@ import {
   settleCallRequest,
   stableStringify,
   storeBotSecret,
+  storedOpenAiCompatibleProbeHeaders,
   storedOpenAiCompatibleProbeKey,
   takeoverLeaseMs,
   toComputerRef,
@@ -141,6 +142,7 @@ import {
   validateRoutineWatch,
   verifyCatalogProviderApiKey,
   verifyMcpInstall,
+  verifyOpenAiCompatibleApiKey,
 } from "@rakazo/adapters";
 import type { Auth } from "@rakazo/auth";
 import type {
@@ -167,9 +169,11 @@ import {
   canonicalPiProviderId,
   foldComputerCommands,
   isDeletableMemoryDocument,
+  isOllamaCloudBaseUrl,
   mcpOAuthEnvReferences,
   OPENAI_COMPATIBLE_PROVIDER_ID,
   parseTicketRef,
+  signupSurveyAsksTeamSize,
   storedPiProviderIds,
   usableModelId,
 } from "@rakazo/contracts";
@@ -213,6 +217,7 @@ import {
   createRepos,
   createSpaceForMember,
   createThreadMessageInTransaction,
+  crossSpaceCommunicationAllowed,
   defaultModelCredentialCandidates,
   deleteEmptySpaceForMember,
   deleteUnreferencedCredentialSecret,
@@ -474,6 +479,9 @@ function concreteKeepAccountIds(
   }
   return { keepIds, canRevokeUnreferenced };
 }
+
+/** Connection flows hold the provider lock across provider calls (45s budget plus database work). */
+const PROVIDER_LOCK_TRANSACTION_MS = 60_000;
 
 async function lockProviderConnectionScope(
   tx: Prisma.TransactionClient,
@@ -809,15 +817,45 @@ function botSecretMetadataDto(row: {
   };
 }
 
-const BOT_INTRO_PROMPT =
-  "You were just created. In one reply, say what you understood your role to be from your title, description and instructions, and ask for anything you need to get started.";
+/** The creation intro's hidden prompt. It names only the tools this bot still has. */
+export function botIntroPrompt(input: {
+  userName: string;
+  spaceName: string | null;
+  disabledBuiltinTools: readonly string[];
+}): string {
+  const canAsk = !input.disabledBuiltinTools.includes("ask_user");
+  const canUpdate = !input.disabledBuiltinTools.includes("update_bot");
+  const options =
+    "two to four short options that fit your name, anything your title, description or instructions already say, and what you know about them, never a stock list";
+  return [
+    [
+      "You were just created.",
+      input.userName ? `${input.userName} made you.` : undefined,
+      input.spaceName ? `Their team space is called "${input.spaceName}".` : undefined,
+    ]
+      .filter(Boolean)
+      .join(" "),
+    // Text streamed before ask_user is not kept once the run pauses, so the greeting
+    // goes in the question itself.
+    canAsk
+      ? `Call ask_user right away, with no text before it. Its question greets them by first name in a few words and asks what they want you for, with ${options}. They can also type their own answer.`
+      : `Greet them by first name in a few words and ask in one sentence what they want you for, suggesting ${options}.`,
+    "If your profile already makes that clear, say in one line what you will do instead of asking.",
+    canUpdate
+      ? "Once you know what you are for, use update_bot to set your title to a short role and your description to one line. Leave them unset if the answer is too vague, and keep your name and look."
+      : undefined,
+    "Then get started, asking one follow-up only if you cannot start without it.",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
 
 /**
- * A freshly created bot otherwise sits silent until someone hands it real work,
- * so a misunderstood role goes unnoticed until it costs a run. Queue one
- * invisible-prompt turn (like a routine or skill test run) so its first
- * message states how it read its own instructions. The executor gives the
- * "created" trigger no tools (see executor.ts), so this turn can only speak.
+ * Creating a bot asks only for a name and a look, so the bot finds out what it
+ * is for itself. Queue one hidden-prompt turn (like a routine or skill test
+ * run) that greets the user and asks. The executor limits the "created"
+ * trigger to that question and the bot's own profile (see executor.ts), and
+ * answering resumes the run as the user's turn.
  */
 export async function enqueueBotIntroRun(deps: RouterDeps, actor: Actor, bot: Bot): Promise<void> {
   const threadId = bot.threadId;
@@ -827,14 +865,29 @@ export async function enqueueBotIntroRun(deps: RouterDeps, actor: Actor, bot: Bo
   // harness queued next, for a bot it doesn't otherwise get to opt out of.
   if (deps.env.agentRuntime === "scripted") return;
   if ((await modelSetup(deps, actor)).needsModel) return;
+  const [user, space] = await Promise.all([
+    deps.prisma.user.findUnique({ where: { id: actor.userId }, select: { name: true } }),
+    deps.prisma.space.findUnique({
+      where: { id: actor.spaceId },
+      select: { name: true, isDefault: true },
+    }),
+  ]);
+  const prompt = botIntroPrompt({
+    userName: user?.name.trim() ?? "",
+    spaceName: space && !space.isDefault ? space.name.trim() || null : null,
+    disabledBuiltinTools: bot.disabledBuiltinTools ?? [],
+  });
   const run = await deps.prisma.$transaction(async (tx) => {
+    // An idempotent create (spawnKey) returns the bot it already made; it gets one intro.
+    await tx.$queryRaw`SELECT id FROM threads WHERE id = ${threadId} FOR UPDATE`;
+    if (await tx.run.findFirst({ where: { botId: bot.id }, select: { id: true } })) return null;
     const task = await tx.task.create({
       data: {
         spaceId: actor.spaceId,
         botId: bot.id,
         threadId,
         userId: actor.userId,
-        prompt: BOT_INTRO_PROMPT,
+        prompt,
         status: "queued",
       },
     });
@@ -851,7 +904,7 @@ export async function enqueueBotIntroRun(deps: RouterDeps, actor: Actor, bot: Bo
       select: { id: true },
     });
   });
-  await deps.jobs.enqueue(runContinueJob(run.id));
+  if (run) await deps.jobs.enqueue(runContinueJob(run.id));
 }
 
 async function resolveSpaceBoard(
@@ -1132,10 +1185,8 @@ export function createRouter(deps: RouterDeps) {
       update: authed.preferences.update.handler(async ({ context, input }): Promise<Me> => {
         await deps.prisma.user.update({
           where: { id: context.actor.userId },
-          data: {
-            ...(input.avatarStyle === undefined ? {} : { avatarStyle: input.avatarStyle }),
-            ...(input.timezone === undefined ? {} : { timezone: input.timezone }),
-          },
+          // An avatar style from an older app is accepted and ignored: there is only one.
+          data: input.timezone === undefined ? {} : { timezone: input.timezone },
         });
         return meDto(deps, context.actor);
       }),
@@ -1533,6 +1584,12 @@ export function createRouter(deps: RouterDeps) {
             omitVisionModelIds,
             allowPrivateEndpoint: mayUsePrivateEndpoint(deps),
           });
+          if (input.provider === OPENAI_COMPATIBLE_PROVIDER_ID) {
+            const saved = parseModelSecret(plaintext);
+            if (saved.kind === "openai_compatible") {
+              await verifyOpenAiCompatibleApiKey(saved, deps.modelConnectionFetch, context.signal);
+            }
+          }
           if (input.apiKey?.trim()) {
             await verifyCatalogProviderApiKey(
               { provider: input.provider, apiKey: input.apiKey },
@@ -1575,7 +1632,8 @@ export function createRouter(deps: RouterDeps) {
       probeOpenAiCompatible: authed.models.probeOpenAiCompatible.handler(
         async ({ context, input }) => {
           let apiKey = input.apiKey;
-          if (!apiKey?.trim()) {
+          let headers = input.headers;
+          if (!apiKey?.trim() || headers === undefined) {
             try {
               const preferred = await findModelCredential(
                 deps.prisma,
@@ -1586,9 +1644,14 @@ export function createRouter(deps: RouterDeps) {
                 where: { userId: context.actor.userId, provider: OPENAI_COMPATIBLE_PROVIDER_ID },
                 orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
               });
-              const candidates = preferred
-                ? [preferred, ...credentials.filter((credential) => credential.id !== preferred.id)]
-                : credentials;
+              const candidates = input.credentialId
+                ? credentials.filter((credential) => credential.id === input.credentialId)
+                : preferred
+                  ? [
+                      preferred,
+                      ...credentials.filter((credential) => credential.id !== preferred.id),
+                    ]
+                  : credentials;
               const secrets = await deps.prisma.secret.findMany({
                 where: {
                   id: { in: candidates.map((credential) => credential.secretId) },
@@ -1602,11 +1665,15 @@ export function createRouter(deps: RouterDeps) {
                 const ciphertext = ciphertexts.get(credential.secretId);
                 if (!ciphertext) continue;
                 try {
-                  apiKey = storedOpenAiCompatibleProbeKey(
-                    input.baseUrl,
-                    await deps.secrets.load(ciphertext, credential.secretId),
-                  );
-                  if (apiKey) break;
+                  const plaintext = await deps.secrets.load(ciphertext, credential.secretId);
+                  const savedKey = storedOpenAiCompatibleProbeKey(input.baseUrl, plaintext);
+                  const savedHeaders = storedOpenAiCompatibleProbeHeaders(input.baseUrl, plaintext);
+                  if (!savedKey && savedHeaders === undefined) continue;
+                  // A saved key and its routing headers are one credential. Explicit
+                  // replacements may override either field, but never borrow from another row.
+                  if (!apiKey?.trim()) apiKey = savedKey;
+                  headers ??= savedHeaders;
+                  break;
                 } catch {
                   // An unreadable secret must not prevent trying the remaining credentials.
                 }
@@ -1617,8 +1684,8 @@ export function createRouter(deps: RouterDeps) {
           }
           try {
             const models = await probeOpenAiCompatibleModels(
-              { ...input, apiKey },
-              undefined,
+              { ...input, apiKey, headers },
+              isOllamaCloudBaseUrl(input.baseUrl) ? deps.modelConnectionFetch : undefined,
               context.signal,
               { allowPrivate: mayUsePrivateEndpoint(deps) },
             );
@@ -2060,6 +2127,9 @@ export function createRouter(deps: RouterDeps) {
               ? { teamChatAmbientEnabled: input.teamChatAmbientEnabled }
               : {}),
             ...(input.teamChatRules !== undefined ? { teamChatRules: input.teamChatRules } : {}),
+            ...(input.crossSpaceCommunication !== undefined
+              ? { crossSpaceCommunication: input.crossSpaceCommunication }
+              : {}),
             ...(input.fleetManagement !== undefined
               ? { fleetManagement: input.fleetManagement }
               : {}),
@@ -5105,6 +5175,31 @@ export function createRouter(deps: RouterDeps) {
       },
     },
     onboarding: {
+      signupSurvey: authed.onboarding.signupSurvey.handler(async ({ context, input }) => {
+        const answers = {
+          reason: input.reason || null,
+          use: input.use ?? null,
+          teamSize: signupSurveyAsksTeamSize(input.use) ? (input.teamSize ?? null) : null,
+          source: input.source || null,
+        };
+        const saved = await deps.prisma.signupSurvey.upsert({
+          where: { userId: context.actor.userId },
+          create: { userId: context.actor.userId, ...answers },
+          update: answers,
+        });
+        deps.analytics?.capture(
+          context.actor.userId,
+          {
+            name: "signup_survey_answered",
+            skipped: Object.values(answers).every((answer) => answer === null),
+            ...(answers.use ? { use: answers.use } : {}),
+            ...(answers.teamSize ? { teamSize: answers.teamSize } : {}),
+          },
+          // The first save's time keeps a resubmission a duplicate of the same event.
+          { id: context.actor.userId, at: saved.createdAt },
+        );
+        return { ok: true as const };
+      }),
       start: authed.onboarding.start.handler(async ({ context, input }) => {
         await startOnboarding(onboardingDeps, context.actor, input.botId);
         return { ok: true as const };
@@ -5214,65 +5309,80 @@ export function createRouter(deps: RouterDeps) {
         }
         // Share the revoke scope lock so a slug-wide remote delete cannot miss a
         // row that is inserted after SELECT FOR UPDATE and before remote revoke.
-        const row = await deps.prisma.$transaction(async (tx) => {
-          await lockProviderConnectionScope(tx, context.actor, input.connectorId, input.provider);
-          const existing = await tx.connection.findMany({
-            where: {
-              spaceId: context.actor.spaceId,
-              userId: context.actor.userId,
-              connectorId: input.connectorId,
-              provider: input.provider,
-            },
-            select: { id: true, status: true },
-            orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
-          });
-          const reusable = pickReusableConnection(existing);
-          if (reusable) {
-            return tx.connection.update({
-              where: { id: reusable.id },
+        // Complete and revoke hold that lock across provider calls, so wait as long as they may.
+        const row = await deps.prisma.$transaction(
+          async (tx) => {
+            await lockProviderConnectionScope(tx, context.actor, input.connectorId, input.provider);
+            const existing = await tx.connection.findMany({
+              where: {
+                spaceId: context.actor.spaceId,
+                userId: context.actor.userId,
+                connectorId: input.connectorId,
+                provider: input.provider,
+              },
+              select: { id: true, status: true },
+              orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
+            });
+            const reusable = pickReusableConnection(existing);
+            if (reusable) {
+              return tx.connection.update({
+                where: { id: reusable.id },
+                data: {
+                  displayName: input.displayName,
+                  status: "pending",
+                  providerRef: null,
+                  metadata: {},
+                },
+              });
+            }
+            return tx.connection.create({
               data: {
+                spaceId: context.actor.spaceId,
+                userId: context.actor.userId,
+                connectorId: input.connectorId,
+                provider: input.provider,
                 displayName: input.displayName,
                 status: "pending",
-                providerRef: null,
-                metadata: {},
               },
             });
-          }
-          return tx.connection.create({
-            data: {
-              spaceId: context.actor.spaceId,
-              userId: context.actor.userId,
-              connectorId: input.connectorId,
-              provider: input.provider,
-              displayName: input.displayName,
-              status: "pending",
-            },
-          });
-        });
+          },
+          { timeout: PROVIDER_LOCK_TRANSACTION_MS },
+        );
         try {
           const auth = await connector.begin(
-            { provider: input.provider, redirectUrl: `${deps.env.webOrigin}/app` },
+            {
+              provider: input.provider,
+              redirectUrl: `${deps.env.webOrigin}/integrations/callback`,
+            },
             connectionContext(context.actor, "connections.begin", context.signal),
           );
           // Re-take the provider lock and only advance still-pending rows so a
           // concurrent revoke cannot be overwritten back to pending/connected.
-          const applied = await deps.prisma.$transaction(async (tx) => {
-            await lockProviderConnectionScope(tx, context.actor, input.connectorId, input.provider);
-            const updated = await tx.connection.updateMany({
-              where: {
-                id: row.id,
-                spaceId: context.actor.spaceId,
-                userId: context.actor.userId,
-                status: "pending",
-              },
-              data: {
-                status: auth.authorizationUrl ? "pending" : "connected",
-                providerRef: auth.state || null,
-                metadata: { state: auth.state },
-              },
-            });
-            return updated.count > 0;
-          });
+          const applied = await deps.prisma.$transaction(
+            async (tx) => {
+              await lockProviderConnectionScope(
+                tx,
+                context.actor,
+                input.connectorId,
+                input.provider,
+              );
+              const updated = await tx.connection.updateMany({
+                where: {
+                  id: row.id,
+                  spaceId: context.actor.spaceId,
+                  userId: context.actor.userId,
+                  status: "pending",
+                },
+                data: {
+                  status: auth.authorizationUrl ? "pending" : "connected",
+                  providerRef: auth.state || null,
+                  metadata: { state: auth.state },
+                },
+              });
+              return updated.count > 0;
+            },
+            { timeout: PROVIDER_LOCK_TRANSACTION_MS },
+          );
           if (applied && !auth.authorizationUrl) {
             await recordSecurityEvent(
               connectionCreatedEvent("connections.begin", row.id, context.actor),
@@ -5380,7 +5490,7 @@ export function createRouter(deps: RouterDeps) {
                       if (!canRevokeUnreferenced) return;
                       await revokeUnreferenced(input.provider, keepIds, adapterContext);
                     },
-                    { timeout: 60_000 },
+                    { timeout: PROVIDER_LOCK_TRANSACTION_MS },
                   )
                   .catch(() => undefined);
               }
@@ -5729,7 +5839,7 @@ export function createRouter(deps: RouterDeps) {
               if (!next) throw new IsolationError();
               return next;
             },
-            { timeout: 60_000 },
+            { timeout: PROVIDER_LOCK_TRANSACTION_MS },
           );
         }
         // Clients poll this procedure, so it records the credential once, on the transition.
@@ -5919,7 +6029,7 @@ export function createRouter(deps: RouterDeps) {
               previousStatus: row.status,
             };
           },
-          { timeout: 60_000 },
+          { timeout: PROVIDER_LOCK_TRANSACTION_MS },
         );
 
         if (outcome.remote) {
@@ -6202,6 +6312,16 @@ export function createRouter(deps: RouterDeps) {
               // The claim holds the connection row lock through commit, so a
               // revoke either beats it or waits — it can never interleave with
               // the confirmation write below.
+              if (
+                input.accept &&
+                !(await crossSpaceCommunicationAllowed(
+                  tx,
+                  connection.requesterBotId,
+                  connection.targetBotId,
+                ))
+              ) {
+                throw new ORPCError("FORBIDDEN");
+              }
               const { count } = await tx.agentConnection.updateMany({
                 where: { id: connection.id, status: "pending" },
                 data: { status: input.accept ? "approved" : "declined" },
@@ -6658,7 +6778,9 @@ export function createRouter(deps: RouterDeps) {
       })),
     },
     voice: {
-      catalog: authed.voice.catalog.handler(async () => listVoiceCatalog()),
+      catalog: authed.voice.catalog.handler(async () =>
+        listVoiceCatalog({ allowPrivateEndpoint: deps.env?.mcpAllowPrivateEndpoint }),
+      ),
       status: authed.voice.status.handler(async ({ context }) => {
         const cred = await findDefaultVoiceCredential(deps.prisma, context.actor);
         return toVoiceStatus(cred);
@@ -6942,7 +7064,10 @@ function hostCredentials(active: boolean, provider: string) {
 
 async function meDto(deps: RouterDeps, actor: Actor): Promise<Me> {
   const [user, setup] = await Promise.all([
-    deps.prisma.user.findUniqueOrThrow({ where: { id: actor.userId } }),
+    deps.prisma.user.findUniqueOrThrow({
+      where: { id: actor.userId },
+      include: { signupSurvey: { select: { userId: true } } },
+    }),
     modelSetup(deps, actor),
   ]);
   return {
@@ -6973,9 +7098,11 @@ async function meDto(deps: RouterDeps, actor: Actor): Promise<Me> {
     canChooseHostComputer:
       Boolean(deps.env.desktopHostChoiceEnabled) && deps.env.sandboxProvider === "docker",
     sandboxProvider: deps.env.sandboxProvider,
-    avatarStyle: user.avatarStyle === "robot" ? "robot" : "organic",
+    avatarStyle: "organic",
     timezone: user.timezone ?? null,
     billingEnabled: Boolean(deps.billing),
+    // Only billing deployments ask; self-hosted installs never see the survey.
+    needsSignupSurvey: Boolean(deps.billing) && !user.signupSurvey,
   };
 }
 

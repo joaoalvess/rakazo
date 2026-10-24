@@ -8,6 +8,8 @@ import {
   abortableDelay,
   BOT_MESSAGE_WAKE_CUE,
   inferHandoffTargetName,
+  MODEL_CONTEXT_TOO_SMALL_ERROR,
+  modelFallbackFailure,
   STEERING_CONTINUATION_PROMPT,
 } from "@rakazo/core";
 
@@ -36,7 +38,7 @@ export class ScriptedAgentRuntime implements AgentRuntime {
     const signal = context?.signal ?? controller.signal;
     try {
       if (shouldFail(request.prompt)) {
-        throw new Error("Scripted run failure");
+        throw new Error(scriptedFailure(request.prompt));
       }
       // Like Pi, a run first takes the messages waiting for it. A continuation exists only to
       // answer them, so their text is its prompt; any other run keeps its own task. A resumed
@@ -655,6 +657,24 @@ code-b
 
 function shouldFail(prompt: string): boolean {
   return prompt.toLowerCase().includes("fail this run");
+}
+
+/** The error a failing run throws; "overloaded" sends the body Anthropic returns with a 529. */
+function scriptedFailure(prompt: string): string {
+  if (/\bfixed context\b/i.test(prompt)) return MODEL_CONTEXT_TOO_SMALL_ERROR;
+  if (/\bexhausted backups\b/i.test(prompt)) {
+    return modelFallbackFailure('429: {"message":"Too many requests"}', [
+      {
+        provider: "fake-provider",
+        modelId: "fake-backup",
+        status: "failed",
+        reason: "429 quota exhausted",
+      },
+    ]);
+  }
+  return /\boverloaded\b/i.test(prompt)
+    ? '529: {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}'
+    : "Scripted run failure";
 }
 
 /** How long a scripted run keeps working before it finishes; undefined runs its script. */

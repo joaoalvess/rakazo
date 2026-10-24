@@ -600,3 +600,8 @@ describe("toolResultTaintsRun", () => {
     }
   });
 });
+
+it("requires human confirmation to approve an agent connection", () => {
+  expect(toolRequiresExplicitApproval("respond_agent_connection")).toBe(true);
+  expect(toolRequiresApproval("respond_agent_connection", false)).toBe(true);
+});
